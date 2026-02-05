@@ -37,11 +37,6 @@ function debounce(fn, delay) {
   };
 }
 
-// Loading state
-function showLoading(element, message = '加载中...') {
-  element.innerHTML = `<div class="loading-state"><span class="loading-spinner"></span>${message}</div>`;
-}
-
 function showSkeletonSummary() {
   summaryEl.innerHTML = `
     <div class="skeleton skeleton-title"></div>

@@ -95,7 +95,7 @@ paper-radar/
 ├── *.py                    # 所有 Python 文件
 ├── agents/                 # agents 目录
 ├── models/                 # models 目录
-└── templates/              # templates 目录
+└── web/                    # 前端静态文件
 ```
 
 ### 2. 配置环境变量

@@ -475,15 +475,6 @@ body {
   color: var(--text-secondary);
 }
 
-.paper-source {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--accent);
-  margin-bottom: 6px;
-}
-
 .paper-date {
   font-size: 12px;
   color: var(--text-muted);
@@ -571,12 +562,6 @@ body {
   border: none;
 }
 
-.paper-summary {
-  margin-bottom: 16px;
-  line-height: 1.7;
-  color: var(--text-secondary);
-}
-
 .paper-info-list {
   display: grid;
   gap: 12px;
@@ -601,34 +586,6 @@ body {
 .paper-info-item .markdown {
   font-size: 14px;
   color: var(--text-secondary);
-}
-
-/* English Abstract Panel */
-.paper-english {
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease, margin 0.3s ease;
-  margin-bottom: 0;
-  padding: 0 16px;
-}
-
-.paper-english.open {
-  max-height: 500px;
-  opacity: 1;
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
-.paper-english-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--accent);
-  margin-bottom: 8px;
 }
 
 .paper-tags {
@@ -735,8 +692,7 @@ body {
   border-top: 1px solid var(--border-light);
 }
 
-.paper-actions a,
-.paper-actions button {
+.paper-actions a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -750,12 +706,6 @@ body {
   text-decoration: none;
 }
 
-.paper-actions button {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-
 .paper-actions a {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -763,12 +713,6 @@ body {
 }
 
 .paper-actions a:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent-border);
-}
-
-.paper-actions button:hover {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent-border);
@@ -1022,34 +966,9 @@ body {
     flex-direction: column;
   }
 
-  .paper-actions a,
-  .paper-actions button {
+  .paper-actions a {
     width: 100%;
   }
-}
-
-/* Loading State */
-.loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 48px;
-  color: var(--text-muted);
-  font-size: 14px;
-}
-
-.loading-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .skeleton {

@@ -94,18 +94,24 @@ paper-radar/
 ├── fetcher.py                 # arXiv 论文获取
 ├── journal_fetcher.py         # 学术期刊论文获取 (Nature, NEJM 等)
 ├── pdf_handler.py             # PDF 下载 (含 EZproxy 认证)
-├── reporter.py                # 报告生成与推送
+├── reporter.py                # 报告生成与保存 (Markdown/JSON)
 ├── config_loader.py           # 配置加载器
 │
 ├── models/
 │   ├── __init__.py
 │   └── paper.py               # 论文数据模型
 │
-├── templates/
-│   └── email.html             # 邮件模板
+├── paper_history.py           # 历史去重与追踪
+├── webapp.py                  # FastAPI Web UI 服务
+├── web/                       # 前端静态文件
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
 │
-├── test_ezproxy_auth.py       # EZproxy 认证测试脚本
-├── test_nature_pdf.py         # Nature PDF 下载集成测试
+├── scripts/
+│   ├── entrypoint.sh          # Docker 入口脚本（cron + web）
+│   ├── build-and-push.sh      # 构建并推送镜像
+│   └── test_sources.py        # 数据源连通性测试
 │
 ├── Dockerfile
 ├── docker-compose.yml
