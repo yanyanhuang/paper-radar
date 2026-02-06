@@ -46,6 +46,27 @@ keywords:
       - "mathematical reasoning, logical inference, problem solving"
       - "self-consistency, tree of thought, reasoning capability"
 
+  - name: "AI for Science"
+    description: "AI驱动科学发现、科学计算、科学建模与跨学科科学智能"
+    examples:
+      - "AI for science, scientific discovery, scientific machine learning"
+      - "computational science, scientific modeling, simulation"
+      - "materials discovery, protein design, drug discovery"
+
+  - name: "Agent for Healthcare"
+    description: "医疗健康场景智能体、临床决策支持、医疗流程自动化"
+    examples:
+      - "healthcare agent, clinical agent, medical assistant"
+      - "clinical decision support, care pathway, triage"
+      - "hospital workflow automation, patient management"
+
+  - name: "Agent for Medical Image"
+    description: "面向医学影像任务的智能体，如影像诊断、报告生成与交互分析"
+    examples:
+      - "medical imaging agent, radiology agent, vision-language agent"
+      - "medical image diagnosis, report generation, interactive analysis"
+      - "agentic medical image segmentation, detection, interpretation"
+
 # arXiv 配置
 arxiv:
   enabled: true
@@ -164,6 +185,7 @@ runtime:
   timezone: "Asia/Shanghai"
   retry_count: 3
   pdf_timeout: 120
+  concurrent_filtering: 5  # Stage 1 轻量模型并发筛选
   concurrent_analysis: 3
 
 # ===========================================

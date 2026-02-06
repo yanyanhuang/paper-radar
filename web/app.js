@@ -37,6 +37,13 @@ function debounce(fn, delay) {
   };
 }
 
+function sortKeywordsAlphabetically(keywords) {
+  if (!Array.isArray(keywords)) return [];
+  return [...keywords].sort((a, b) =>
+    String(a || '').localeCompare(String(b || ''), 'en', { sensitivity: 'base' })
+  );
+}
+
 function showSkeletonSummary() {
   summaryEl.innerHTML = `
     <div class="skeleton skeleton-title"></div>
@@ -341,13 +348,11 @@ function updateSortOptions() {
 }
 
 function updateTrends(report) {
-  const keywords = report.keywords || [];
+  const keywords = sortKeywordsAlphabetically(report.keywords);
   const counts = keywords.map((kw) => ({
     name: kw,
     count: (report.papers_by_keyword?.[kw] || []).length,
   }));
-  counts.sort((a, b) => b.count - a.count);
-  const topKeywords = counts.slice(0, 6);
 
   const uniquePapers = collectUniquePapers(report);
   let arxivCount = 0;
@@ -370,10 +375,10 @@ function updateTrends(report) {
           </svg>
           今日主题趋势
         </h3>
-        <span class="trend-sub">按论文数量排序</span>
+        <span class="trend-sub">按首字母排序</span>
       </div>
       <div class="trend-tags">
-        ${topKeywords
+        ${counts
           .map(
             (item) =>
               `<button type="button" class="trend-tag trend-button" data-keyword="${escapeHtml(
@@ -499,7 +504,9 @@ function renderPapers(report) {
 
   const listHtml = visiblePapers
     .map((paper, index) => {
-      const uniqueTags = Array.from(new Set(paper.matched_keywords || [])).filter(Boolean);
+      const uniqueTags = sortKeywordsAlphabetically(
+        Array.from(new Set(paper.matched_keywords || [])).filter(Boolean)
+      );
       const tagButtons = uniqueTags
         .map(
           (tag) =>
@@ -952,7 +959,7 @@ function navigateToPaper(targetId, { updateUrl = false } = {}) {
 }
 
 function fillKeywordOptions(report) {
-  const keywords = report.keywords || [];
+  const keywords = sortKeywordsAlphabetically(report.keywords);
   keywordSelect.innerHTML = '<option value="all">全部</option>';
   keywords.forEach((kw) => {
     const option = document.createElement('option');

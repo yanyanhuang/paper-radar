@@ -144,7 +144,25 @@ def main():
     light_llm = BaseLLMClient(**light_llm_config)
     filter_agent = FilterAgent(light_llm, keywords)
 
-    filter_results = filter_agent.filter_papers(papers)
+    filter_workers = config.get("runtime", {}).get("concurrent_filtering", 5)
+    try:
+        filter_workers = int(filter_workers)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"Invalid runtime.concurrent_filtering={filter_workers}, fallback to 5"
+        )
+        filter_workers = 5
+    if filter_workers < 1:
+        logger.warning(
+            f"runtime.concurrent_filtering={filter_workers} is less than 1, fallback to 1"
+        )
+        filter_workers = 1
+
+    logger.info(f"Light LLM filtering concurrency: {filter_workers}")
+    filter_results = filter_agent.filter_papers(
+        papers,
+        max_workers=filter_workers,
+    )
 
     logger.info(f"Matched {len(filter_results)} papers")
 

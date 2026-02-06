@@ -1,5 +1,6 @@
 """Filter Agent for paper keyword matching using lightweight LLM."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 from typing import Optional
@@ -154,29 +155,82 @@ class FilterAgent:
                 reason=f"Error: {str(e)}",
             )
 
-    def filter_papers(self, papers: list[Paper]) -> list[FilterResult]:
+    def filter_papers(
+        self,
+        papers: list[Paper],
+        max_workers: int = 5,
+    ) -> list[FilterResult]:
         """
         Filter multiple papers.
 
         Args:
             papers: List of papers to filter
+            max_workers: Max concurrent workers for filtering
 
         Returns:
             List of FilterResult for matched papers only
         """
-        results = []
         total = len(papers)
+        if total == 0:
+            logger.info("Filtering complete: 0/0 papers matched")
+            return []
 
-        for i, paper in enumerate(papers, 1):
-            logger.info(f"[{i}/{total}] Filtering: {paper.title[:60]}...")
+        try:
+            normalized_workers = int(max_workers)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid max_workers={max_workers}, fallback to 1")
+            normalized_workers = 1
 
-            result = self.filter_paper(paper)
+        worker_count = min(max(1, normalized_workers), total)
+        logger.info(
+            f"Filtering {total} papers with {worker_count} concurrent worker(s)"
+        )
 
-            if result.matched:
-                results.append(result)
-                logger.info(f"  ✓ Matched: {result.matched_keywords} ({result.relevance})")
-            else:
-                logger.debug(f"  ✗ Not matched")
+        if worker_count == 1:
+            results = []
+            for i, paper in enumerate(papers, 1):
+                logger.info(f"[{i}/{total}] Filtering: {paper.title[:60]}...")
+                result = self.filter_paper(paper)
+                if result.matched:
+                    results.append(result)
+                    logger.info(f"  ✓ Matched: {result.matched_keywords} ({result.relevance})")
+                else:
+                    logger.debug("  ✗ Not matched")
+            logger.info(f"Filtering complete: {len(results)}/{total} papers matched")
+            return results
 
+        matched_by_index: dict[int, FilterResult] = {}
+        future_to_index = {}
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            for index, paper in enumerate(papers, 1):
+                logger.info(f"[{index}/{total}] Queueing: {paper.title[:60]}...")
+                future = executor.submit(self.filter_paper, paper)
+                future_to_index[future] = index
+
+            completed = 0
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                paper = papers[index - 1]
+                completed += 1
+
+                try:
+                    result = future.result()
+                except Exception as e:
+                    logger.error(f"Error filtering paper {paper.arxiv_id}: {e}")
+                    result = FilterResult(
+                        paper=paper,
+                        matched=False,
+                        reason=f"Error: {str(e)}",
+                    )
+
+                logger.info(f"[{completed}/{total}] Done: {paper.title[:60]}...")
+                if result.matched:
+                    matched_by_index[index] = result
+                    logger.info(f"  ✓ Matched: {result.matched_keywords} ({result.relevance})")
+                else:
+                    logger.debug("  ✗ Not matched")
+
+        results = [matched_by_index[idx] for idx in sorted(matched_by_index)]
         logger.info(f"Filtering complete: {len(results)}/{total} papers matched")
         return results
