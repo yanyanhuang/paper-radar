@@ -236,25 +236,25 @@ def main():
     successful_analyses = [a for a in analyses if a.success]
     logger.info(f"Successfully analyzed {len(successful_analyses)} papers")
 
-    # Save successfully analyzed journal papers to history
-    journal_papers_saved = 0
+    # Save successfully analyzed non-arXiv external papers to history
+    external_papers_saved = 0
     for analysis in successful_analyses:
         paper = analysis.paper
-        # Only save journal papers (not arXiv) to history for deduplication
-        if paper and paper.source == "journal":
+        # External sources use "key:identifier" IDs; native arXiv IDs do not contain ":"
+        if paper and ":" in paper.arxiv_id:
             paper_history.add_paper(
                 paper_id=paper.arxiv_id,
                 title=paper.title,
-                source=paper.primary_category,  # Journal name
+                source=paper.primary_category,
                 keywords=analysis.matched_keywords,
                 pdf_path=pdf_handler.get_saved_pdf_path(
                     paper.arxiv_id, paper.primary_category, today_date
                 ),
             )
-            journal_papers_saved += 1
+            external_papers_saved += 1
 
-    if journal_papers_saved > 0:
-        logger.info(f"Saved {journal_papers_saved} journal papers to history")
+    if external_papers_saved > 0:
+        logger.info(f"Saved {external_papers_saved} external-source papers to history")
 
     # Group analyses by keyword
     analyses_by_keyword: dict[str, list[PaperAnalysis]] = {kw: [] for kw in keyword_names}

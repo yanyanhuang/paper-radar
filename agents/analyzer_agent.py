@@ -257,11 +257,15 @@ class AnalyzerAgent:
                     date=today_date,
                 )
             else:
-                # Use standard handler for arXiv papers
+                # Use standard handler for arXiv and preprint papers
+                is_arxiv_preprint = (
+                    paper.source == "preprint" and ":" not in paper.arxiv_id
+                )
+                storage_source = "arxiv" if is_arxiv_preprint else paper.primary_category
                 pdf_base64 = pdf_handler.download_as_base64(
                     paper.pdf_url,
                     arxiv_id=paper.arxiv_id,
-                    source="arxiv" if not paper.is_journal else paper.primary_category,
+                    source=storage_source,
                     date=today_date,
                 )
 

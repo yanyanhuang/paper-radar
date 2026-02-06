@@ -168,6 +168,7 @@ class ArxivFetcher:
             pdf_url=result.pdf_url,
             categories=categories,
             primary_category=result.primary_category if hasattr(result, "primary_category") else (categories[0] if categories else ""),
+            source="preprint",
         )
 
     def search_papers(self, query: str, max_results: int = 10) -> list[Paper]:

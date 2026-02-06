@@ -24,22 +24,27 @@ class Paper:
     relevance: str = ""
     match_reason: str = ""
 
-    # Source type: "arxiv" or "journal"
-    source: str = "arxiv"
+    # Source type: "preprint" or "journal"
+    source: str = "preprint"
 
     @property
     def abstract_url(self) -> str:
         """Get the abstract page URL."""
-        if self.source == "arxiv":
+        if self.source == "preprint" and ":" not in self.arxiv_id:
             return f"https://arxiv.org/abs/{self.arxiv_id}"
         else:
-            # For journals, pdf_url is usually the article page
+            # For non-arXiv sources, pdf_url is usually the article page
             return self.pdf_url
 
     @property
     def is_journal(self) -> bool:
-        """Check if this paper is from a journal (not arXiv)."""
-        return self.source == "journal" or ":" in self.arxiv_id
+        """Check if this paper is from a journal source."""
+        return self.source == "journal"
+
+    @property
+    def is_preprint(self) -> bool:
+        """Check if this paper is from a preprint source."""
+        return self.source in {"preprint", "arxiv"}
 
     @property
     def journal_name(self) -> str:
@@ -49,7 +54,7 @@ class Paper:
         return ""
 
     def __repr__(self) -> str:
-        source_tag = f"[{self.source}]" if self.source != "arxiv" else ""
+        source_tag = f"[{self.source}]" if self.source != "preprint" else ""
         return f"Paper{source_tag}(id={self.arxiv_id}, title={self.title[:50]}...)"
 
 

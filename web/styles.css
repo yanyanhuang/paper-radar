@@ -274,7 +274,7 @@ body {
 
 .trend-metrics {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -405,16 +405,16 @@ body {
   color: var(--text-secondary);
 }
 
-.source-badge.source-arxiv {
-  background: rgba(37, 99, 235, 0.1);
-  border-color: rgba(37, 99, 235, 0.25);
-  color: var(--accent);
-}
-
 .source-badge.source-journal {
   background: rgba(16, 185, 129, 0.12);
   border-color: rgba(16, 185, 129, 0.22);
   color: #047857;
+}
+
+.source-badge.source-preprint {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.22);
+  color: #b45309;
 }
 
 .source-badge.source-cat {
@@ -935,6 +935,10 @@ body {
   }
 
   .trends {
+    grid-template-columns: 1fr;
+  }
+
+  .trend-metrics {
     grid-template-columns: 1fr;
   }
 

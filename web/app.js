@@ -280,13 +280,33 @@ function formatPublishedLabel(paper, report) {
   };
 }
 
+function resolveSourceType(paper) {
+  const source = String(paper?.source || '').trim().toLowerCase();
+  const category = String(paper?.primary_category || '').trim().toLowerCase();
+  const paperId = String(paper?.id || paper?.arxiv_id || '').trim().toLowerCase();
+  const isPreprint =
+    source === 'arxiv' ||
+    source === 'preprint' ||
+    category.includes('biorxiv') ||
+    category.includes('medrxiv') ||
+    paperId.startsWith('biorxiv:') ||
+    paperId.startsWith('medrxiv:');
+
+  if (source === 'journal' && !isPreprint) return 'journal';
+  if (isPreprint) return 'preprint';
+  if (source && source !== 'journal') return 'journal';
+  if (paperId.includes(':')) return 'journal';
+  return 'preprint';
+}
+
 function renderSourceBadges(paper) {
-  const isJournal = paper?.source === 'journal';
-  const primary = isJournal ? '期刊' : 'arXiv';
+  const sourceType = resolveSourceType(paper);
+  const primary = sourceType === 'journal' ? '期刊' : '预印本';
   const cat = paper?.primary_category || '';
+  const sourceClass = sourceType === 'journal' ? 'source-journal' : 'source-preprint';
 
   const badges = [
-    `<span class="source-badge ${isJournal ? 'source-journal' : 'source-arxiv'}">${escapeHtml(primary)}</span>`,
+    `<span class="source-badge ${sourceClass}">${escapeHtml(primary)}</span>`,
   ];
 
   if (cat) {
@@ -355,13 +375,14 @@ function updateTrends(report) {
   }));
 
   const uniquePapers = collectUniquePapers(report);
-  let arxivCount = 0;
+  let preprintCount = 0;
   let journalCount = 0;
   uniquePapers.forEach((paper) => {
-    if (paper.source === 'journal') {
+    const sourceType = resolveSourceType(paper);
+    if (sourceType === 'journal') {
       journalCount += 1;
     } else {
-      arxivCount += 1;
+      preprintCount += 1;
     }
   });
 
@@ -400,8 +421,8 @@ function updateTrends(report) {
       </div>
       <div class="trend-metrics">
         <div>
-          <span class="trend-label">arXiv</span>
-          <span class="trend-value">${arxivCount}</span>
+          <span class="trend-label">预印本</span>
+          <span class="trend-value">${preprintCount}</span>
         </div>
         <div>
           <span class="trend-label">期刊</span>

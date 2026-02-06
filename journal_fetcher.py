@@ -43,6 +43,8 @@ JOURNAL_RSS_FEEDS = {
     "pnas": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=pnas",
 }
 
+PREPRINT_KEYS = {"biorxiv", "medrxiv"}
+
 
 class JournalFetcher:
     """Fetches papers from academic journals via RSS."""
@@ -112,8 +114,15 @@ class JournalFetcher:
         if total_skipped > 0:
             logger.info(f"Skipped {total_skipped} already processed papers")
 
-        logger.info(f"Total new journal papers: {len(all_papers)}")
+        logger.info(f"Total new external papers: {len(all_papers)}")
         return all_papers
+
+    def _resolve_source_type(self, journal: dict) -> str:
+        """Resolve normalized source type for a configured feed."""
+        key = str(journal.get("key", "")).lower()
+        if key in PREPRINT_KEYS:
+            return "preprint"
+        return "journal"
 
     def _fetch_journal(self, journal: dict, debug: bool = False) -> list[Paper]:
         """Fetch papers from a single journal."""
@@ -219,7 +228,7 @@ class JournalFetcher:
             pdf_url=pdf_url,
             categories=[journal["name"]],
             primary_category=journal["name"],
-            source="journal",  # Mark as journal source
+            source=self._resolve_source_type(journal),
         )
 
     def _generate_paper_id(self, journal: dict, entry, doi: str) -> str:
