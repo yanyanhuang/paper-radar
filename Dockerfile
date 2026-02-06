@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
     ca-certificates \
+    ghostscript \
     chromium \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*

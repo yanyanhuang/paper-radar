@@ -142,6 +142,19 @@ class AnalyzerAgent:
 
         return None
 
+    @staticmethod
+    def _is_request_too_large_error(error: Optional[str]) -> bool:
+        """Check whether an error message indicates request payload too large."""
+        if not error:
+            return False
+
+        lowered = error.lower()
+        return (
+            "413" in lowered
+            or "request entity too large" in lowered
+            or "payload too large" in lowered
+        )
+
     def analyze_paper(
         self,
         paper: Paper,
@@ -246,9 +259,11 @@ class AnalyzerAgent:
 
             # Choose appropriate PDF handler based on paper source
             pdf_base64 = None
+            selected_pdf_handler = pdf_handler
             if paper.is_journal and ezproxy_handler:
                 # Use EZproxy for journal papers (Nature, etc.)
                 logger.debug(f"  Using EZproxy handler for journal paper")
+                selected_pdf_handler = ezproxy_handler
                 pdf_base64 = ezproxy_handler.download_as_base64(
                     paper.pdf_url,
                     paper_id=paper.arxiv_id,
@@ -289,6 +304,31 @@ class AnalyzerAgent:
                 fr.matched_keywords,
                 pdf_base64,
             )
+
+            # Retry once with compressed PDF only when payload is too large (413)
+            if (
+                not analysis.success
+                and self._is_request_too_large_error(analysis.error)
+                and selected_pdf_handler is not None
+            ):
+                logger.warning(
+                    f"  413 detected for {paper.arxiv_id}, compressing PDF and retrying once..."
+                )
+                compressed_pdf = selected_pdf_handler.compress_base64_for_retry(
+                    pdf_base64,
+                    hint=paper.arxiv_id,
+                )
+                if compressed_pdf:
+                    analysis = self.analyze_paper(
+                        paper,
+                        fr.matched_keywords,
+                        compressed_pdf,
+                    )
+                else:
+                    logger.warning(
+                        f"  Compression unavailable/failed for {paper.arxiv_id}, skip retry"
+                    )
+
             # Store reference to original paper
             analysis.paper = paper
 

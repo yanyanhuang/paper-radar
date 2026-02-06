@@ -3,6 +3,9 @@
 import base64
 import os
 import pickle
+import shutil
+import subprocess
+import tempfile
 import time
 import httpx
 import requests
@@ -15,16 +18,26 @@ from loguru import logger
 class PDFHandler:
     """Handles PDF download and base64 encoding."""
 
-    def __init__(self, timeout: int = 120, cache_dir: Optional[str] = None):
+    def __init__(
+        self,
+        timeout: int = 120,
+        cache_dir: Optional[str] = None,
+        compression_timeout: int = 120,
+        compression_profile: str = "/ebook",
+    ):
         """
         Initialize the PDF handler.
 
         Args:
             timeout: Request timeout in seconds
             cache_dir: Optional directory to cache downloaded PDFs
+            compression_timeout: PDF compression timeout in seconds
+            compression_profile: Ghostscript PDFSETTINGS profile
         """
         self.timeout = timeout
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.compression_timeout = compression_timeout
+        self.compression_profile = compression_profile
 
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +188,111 @@ class PDFHandler:
         original_size = len(pdf_base64) * 3 / 4
         return original_size / (1024 * 1024)
 
+    def compress_base64_for_retry(
+        self,
+        pdf_base64: str,
+        hint: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Compress a base64 PDF for retry scenarios (e.g., request entity too large).
+
+        Args:
+            pdf_base64: Original base64 encoded PDF content
+            hint: Optional paper identifier for logging
+
+        Returns:
+            Compressed PDF as base64, or None when compression is unavailable/failed
+        """
+        gs_bin = shutil.which("gs")
+        if not gs_bin:
+            logger.warning("Ghostscript (gs) not found, cannot compress PDF for retry")
+            return None
+
+        try:
+            original_bytes = base64.standard_b64decode(pdf_base64)
+        except Exception as e:
+            logger.warning(f"Failed to decode PDF base64 for compression: {e}")
+            return None
+
+        if not original_bytes.startswith(b"%PDF"):
+            logger.warning("Decoded content is not a valid PDF, skip compression retry")
+            return None
+
+        original_size_mb = len(original_bytes) / 1024 / 1024
+        target_name = hint or "unknown-paper"
+        logger.info(
+            f"Compressing PDF for retry ({target_name}): {original_size_mb:.2f} MB"
+        )
+
+        with tempfile.TemporaryDirectory(prefix="paper-radar-pdf-compress-") as tmpdir:
+            input_pdf = Path(tmpdir) / "input.pdf"
+            output_pdf = Path(tmpdir) / "output.pdf"
+            input_pdf.write_bytes(original_bytes)
+
+            cmd = [
+                gs_bin,
+                "-sDEVICE=pdfwrite",
+                "-dCompatibilityLevel=1.4",
+                f"-dPDFSETTINGS={self.compression_profile}",
+                "-dNOPAUSE",
+                "-dQUIET",
+                "-dBATCH",
+                "-dDetectDuplicateImages=true",
+                "-dDownsampleColorImages=true",
+                "-dColorImageDownsampleType=/Bicubic",
+                "-dColorImageResolution=150",
+                "-dDownsampleGrayImages=true",
+                "-dGrayImageDownsampleType=/Bicubic",
+                "-dGrayImageResolution=150",
+                "-dDownsampleMonoImages=true",
+                "-dMonoImageDownsampleType=/Subsample",
+                "-dMonoImageResolution=300",
+                f"-sOutputFile={output_pdf}",
+                str(input_pdf),
+            ]
+
+            try:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    timeout=self.compression_timeout,
+                    capture_output=True,
+                    text=True,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    f"PDF compression timed out after {self.compression_timeout}s"
+                )
+                return None
+            except subprocess.CalledProcessError as e:
+                stderr_tail = (e.stderr or "").strip()[-500:]
+                logger.warning(f"PDF compression failed: {stderr_tail or e}")
+                return None
+
+            if not output_pdf.exists():
+                logger.warning("Compressed PDF file not generated")
+                return None
+
+            compressed_bytes = output_pdf.read_bytes()
+            if not compressed_bytes.startswith(b"%PDF"):
+                logger.warning("Compressed output is not a valid PDF")
+                return None
+
+            compressed_size_mb = len(compressed_bytes) / 1024 / 1024
+            ratio = (compressed_size_mb / original_size_mb * 100) if original_size_mb else 100
+            logger.info(
+                f"PDF compression done ({target_name}): "
+                f"{original_size_mb:.2f} MB -> {compressed_size_mb:.2f} MB ({ratio:.1f}%)"
+            )
+
+            if len(compressed_bytes) >= len(original_bytes):
+                logger.warning(
+                    f"Compressed PDF is not smaller for {target_name}, skip retry compression"
+                )
+                return None
+
+            return base64.standard_b64encode(compressed_bytes).decode("utf-8")
+
     def clear_cache(self):
         """Clear the PDF cache directory."""
         if self.cache_dir and self.cache_dir.exists():
@@ -200,6 +318,8 @@ class EZproxyPDFHandler(PDFHandler):
         cache_dir: Optional[str] = None,
         cookies_file: Optional[str] = None,
         headless: bool = True,
+        compression_timeout: int = 120,
+        compression_profile: str = "/ebook",
     ):
         """
         Initialize the EZproxy PDF handler.
@@ -209,8 +329,15 @@ class EZproxyPDFHandler(PDFHandler):
             cache_dir: Optional directory to cache downloaded PDFs
             cookies_file: Path to store/load EZproxy cookies
             headless: Run browser in headless mode (default True)
+            compression_timeout: PDF compression timeout in seconds
+            compression_profile: Ghostscript PDFSETTINGS profile
         """
-        super().__init__(timeout, cache_dir)
+        super().__init__(
+            timeout=timeout,
+            cache_dir=cache_dir,
+            compression_timeout=compression_timeout,
+            compression_profile=compression_profile,
+        )
         self.headless = headless
 
         # Set up cookies file path
