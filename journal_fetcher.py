@@ -5,6 +5,7 @@ import feedparser
 import requests
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 from loguru import logger
 
 from models import Paper
@@ -269,11 +270,9 @@ class JournalFetcher:
         # bioRxiv/medRxiv: construct PDF URL
         # https://www.biorxiv.org/content/10.1101/2024.01.01.123456v1 -> .full.pdf
         if "biorxiv.org" in link or "medrxiv.org" in link:
-            if "/content/" in link:
-                # Remove any trailing version and add .full.pdf
-                base_url = link.rstrip("/")
-                if not base_url.endswith(".pdf"):
-                    return base_url + ".full.pdf"
+            normalized = self._normalize_preprint_pdf_url(link)
+            if normalized:
+                return normalized
 
         # Nature journals: construct PDF URL
         if "nature.com" in link:
@@ -311,6 +310,31 @@ class JournalFetcher:
         # For most journals, PDF is not directly available via RSS
         # Return the article page URL
         return link
+
+    def _normalize_preprint_pdf_url(self, link: str) -> Optional[str]:
+        """
+        Normalize bioRxiv/medRxiv article URL to canonical PDF URL.
+
+        Examples:
+        - .../content/10.xxx/v1?rss=1 -> .../content/10.xxx/v1.full.pdf
+        - .../content/10.xxx/v1/ -> .../content/10.xxx/v1.full.pdf
+        """
+        parsed = urlsplit(link)
+        path = parsed.path.rstrip("/")
+        if not path or "/content/" not in path:
+            return None
+
+        # Remove known non-PDF suffixes from feed/article links
+        for suffix in (".abstract", ".short"):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+
+        if not path.endswith(".pdf"):
+            path = f"{path}.full.pdf"
+
+        # Drop query/fragment from canonical PDF URL
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
     def _is_research_article(self, entry, link: str) -> bool:
         """

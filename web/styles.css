@@ -67,17 +67,19 @@ body {
 }
 
 .hero h1 {
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   letter-spacing: -0.02em;
+  line-height: 1.3;
 }
 
 .subtitle {
   color: var(--text-secondary);
   font-size: 15px;
-  max-width: 400px;
+  max-width: 520px;
+  line-height: 1.75;
 }
 
 .hero-right {

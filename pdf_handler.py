@@ -11,7 +11,7 @@ import httpx
 import requests
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 from loguru import logger
 
 
@@ -61,6 +61,10 @@ class PDFHandler:
         Returns:
             Base64 encoded PDF content, or None if download fails
         """
+        request_url = self._normalize_pdf_url(pdf_url)
+        if request_url != pdf_url:
+            logger.debug(f"Normalized PDF URL: {pdf_url} -> {request_url}")
+
         # Determine cache path based on source and date
         cache_path = self._get_cache_path(arxiv_id, source, date)
 
@@ -70,18 +74,21 @@ class PDFHandler:
             return self._file_to_base64(cache_path)
 
         # Download PDF
-        logger.debug(f"Downloading PDF from: {pdf_url}")
+        logger.debug(f"Downloading PDF from: {request_url}")
 
         try:
             with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                response = client.get(pdf_url)
+                response = client.get(
+                    request_url,
+                    headers=self._build_download_headers(request_url),
+                )
                 response.raise_for_status()
 
                 pdf_content = response.content
 
                 # Verify it's a PDF
                 if not pdf_content.startswith(b"%PDF"):
-                    logger.error(f"Downloaded content is not a valid PDF: {pdf_url}")
+                    logger.error(f"Downloaded content is not a valid PDF: {request_url}")
                     return None
 
                 # Cache if enabled - use organized path
@@ -94,7 +101,7 @@ class PDFHandler:
                 return base64.standard_b64encode(pdf_content).decode("utf-8")
 
         except httpx.TimeoutException:
-            logger.error(f"Timeout downloading PDF: {pdf_url}")
+            logger.error(f"Timeout downloading PDF: {request_url}")
             return None
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error downloading PDF: {e}")
@@ -102,6 +109,54 @@ class PDFHandler:
         except Exception as e:
             logger.error(f"Error downloading PDF: {e}")
             return None
+
+    @staticmethod
+    def _build_download_headers(url: str) -> dict:
+        """Build browser-like headers for PDF download requests."""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/pdf,application/octet-stream,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        lowered = url.lower()
+        if "biorxiv.org" in lowered or "medrxiv.org" in lowered:
+            parsed = urlsplit(url)
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+        return headers
+
+    @staticmethod
+    def _normalize_pdf_url(pdf_url: str) -> str:
+        """
+        Normalize PDF URL before downloading.
+
+        Fixes bioRxiv/medRxiv feed links such as:
+        - .../content/10.xxxv1?rss=1.full.pdf
+        - .../content/10.xxxv1?rss=1
+        """
+        lowered = pdf_url.lower()
+        if "biorxiv.org" not in lowered and "medrxiv.org" not in lowered:
+            return pdf_url
+
+        parsed = urlsplit(pdf_url)
+        path = parsed.path.rstrip("/")
+        if not path or "/content/" not in path:
+            return pdf_url
+
+        for suffix in (".abstract", ".short"):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+
+        # Handle malformed "?rss=1.full.pdf" created by appending to query URL
+        if not path.endswith(".pdf"):
+            path = f"{path}.full.pdf"
+
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
     def _file_to_base64(self, file_path: Path) -> Optional[str]:
         """Read file and return as base64."""
