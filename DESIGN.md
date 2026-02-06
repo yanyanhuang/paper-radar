@@ -133,10 +133,17 @@ keywords:
     examples:
       - "medical image segmentation, detection, classification"
 
-arxiv:
+preprints:
   enabled: true
-  categories: "cs.AI+cs.CV+cs.CL+cs.LG+eess.IV+q-bio.QM"
-  max_papers_per_day: 0
+  arxiv:
+    enabled: true
+    categories: "cs.AI+cs.CV+cs.CL+cs.LG+eess.IV+q-bio.QM"
+    max_papers_per_day: 0
+  max_papers_per_source: 30
+  sources:
+    - name: "bioRxiv"
+      key: "biorxiv"
+      enabled: true
 
 journals:
   enabled: true

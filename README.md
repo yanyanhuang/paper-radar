@@ -70,7 +70,7 @@ docker compose exec paper-radar python main.py --dry-run
 ### `config.yaml`
 
 - `keywords`: 领域列表（`name` / `description` / `examples`）
-- `arxiv`: arXiv 类别、抓取数量与重试策略
+- `preprints`: 预印本源配置（`arXiv` + `bioRxiv/medRxiv`）
 - `journals`: 期刊源开关与列表
 - `llm`: light/heavy/summary 的模型与限速
 - `runtime`: cron schedule、并发、超时等

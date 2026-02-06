@@ -1,5 +1,5 @@
 # ===========================================
-# arXiv Keyword Daily 配置文件
+# PaperRadar 配置文件
 # ===========================================
 
 # 关键词配置 - 可根据需要添加或修改
@@ -67,27 +67,34 @@ keywords:
       - "medical image diagnosis, report generation, interactive analysis"
       - "agentic medical image segmentation, detection, interpretation"
 
-# arXiv 配置
-arxiv:
+# 预印本配置 (arXiv + bioRxiv + medRxiv)
+preprints:
   enabled: true
-  categories: "cs.AI+cs.CV+cs.CL+cs.LG+eess.IV+q-bio.QM"
-  max_papers_per_day: 0  # 0 表示不限制
-  # 重试配置 - 当 RSS 为空时的重试策略
-  retry_interval_minutes: 30  # 每次重试间隔（分钟）
-  max_retry_hours: 5  # 最大等待时间（小时）
 
-# 期刊配置 (Nature, NEJM 等)
-journals:
-  enabled: true
-  max_papers_per_journal: 30
+  # arXiv 预印本源
+  arxiv:
+    enabled: true
+    categories: "cs.AI+cs.CV+cs.CL+cs.LG+eess.IV+q-bio.QM"
+    max_papers_per_day: 0  # 0 表示不限制
+    # 重试配置 - 当 RSS 为空时的重试策略
+    retry_interval_minutes: 30  # 每次重试间隔（分钟）
+    max_retry_hours: 5  # 最大等待时间（小时）
+
+  # RSS 型预印本源（bioRxiv / medRxiv）
+  max_papers_per_source: 30
   sources:
-    # 预印本平台
     - name: "bioRxiv"
       key: "biorxiv"
       enabled: true
     - name: "medRxiv"
       key: "medrxiv"
       enabled: true
+
+# 期刊配置 (Nature, NEJM 等)
+journals:
+  enabled: true
+  max_papers_per_journal: 30
+  sources:
     # Nature 系列
     - name: "Nature"
       key: "nature"

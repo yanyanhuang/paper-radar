@@ -3,7 +3,7 @@
 PaperRadar - Main Entry Point
 
 Automated paper analysis based on keywords using dual LLM architecture.
-Supports arXiv and academic journals (Nature, NEJM, etc.)
+Supports preprints and academic journals (Nature, NEJM, etc.)
 """
 
 import sys
@@ -20,6 +20,8 @@ from pdf_handler import PDFHandler, EZproxyPDFHandler
 from agents import BaseLLMClient, FilterAgent, AnalyzerAgent, SummaryAgent
 from reporter import Reporter
 from models import DailyReport, PaperAnalysis
+
+PREPRINT_SOURCE_KEYS = {"biorxiv", "medrxiv"}
 
 
 def setup_logging(debug: bool = False):
@@ -43,9 +45,52 @@ def setup_logging(debug: bool = False):
     logger.add(log_file, format=log_format, level="DEBUG", rotation="1 day")
 
 
+def validate_config_structure(config: dict) -> list[str]:
+    """Validate that config only uses the new preprints + journals structure."""
+    errors = []
+
+    if "arxiv" in config:
+        errors.append(
+            "Top-level `arxiv` is no longer supported; move it to `preprints.arxiv`."
+        )
+
+    preprints_cfg = config.get("preprints")
+    if not isinstance(preprints_cfg, dict):
+        errors.append("Missing required `preprints` section.")
+    else:
+        if not isinstance(preprints_cfg.get("arxiv"), dict):
+            errors.append("Missing required `preprints.arxiv` section.")
+        sources = preprints_cfg.get("sources", [])
+        if not isinstance(sources, list):
+            errors.append("`preprints.sources` must be a list.")
+
+    journals_cfg = config.get("journals")
+    if not isinstance(journals_cfg, dict):
+        errors.append("Missing required `journals` section.")
+    else:
+        sources = journals_cfg.get("sources", [])
+        if not isinstance(sources, list):
+            errors.append("`journals.sources` must be a list.")
+        else:
+            misplaced = []
+            for src in sources:
+                if not isinstance(src, dict):
+                    continue
+                key = str(src.get("key", "")).lower()
+                if key in PREPRINT_SOURCE_KEYS:
+                    misplaced.append(src.get("key", ""))
+            if misplaced:
+                keys = ", ".join(sorted(set(misplaced)))
+                errors.append(
+                    f"`journals.sources` contains preprint feeds ({keys}); move them to `preprints.sources`."
+                )
+
+    return errors
+
+
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="arXiv Keyword Daily")
+    parser = argparse.ArgumentParser(description="PaperRadar Daily")
     parser.add_argument(
         "--config",
         "-c",
@@ -73,7 +118,7 @@ def main():
     setup_logging(args.debug)
 
     logger.info("=" * 60)
-    logger.info(f"arXiv Keyword Daily - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"PaperRadar Daily - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
     # Load configuration
@@ -82,6 +127,13 @@ def main():
         logger.info(f"Loaded config from: {args.config}")
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
+        sys.exit(1)
+
+    config_errors = validate_config_structure(config)
+    if config_errors:
+        logger.error("Invalid config structure:")
+        for err in config_errors:
+            logger.error(f"  - {err}")
         sys.exit(1)
 
     keywords = config.get("keywords", [])
@@ -100,21 +152,39 @@ def main():
     history_stats = paper_history.get_stats()
     logger.info(f"Paper history: {history_stats['total_papers']} papers tracked")
 
-    # Fetch from arXiv
-    arxiv_config = config.get("arxiv", {})
-    if arxiv_config.get("enabled", True):
-        logger.info("[Stage 0.1] Fetching from arXiv...")
+    preprints_config = config["preprints"]
+    arxiv_config = preprints_config.get("arxiv", {})
+    preprints_enabled = preprints_config.get("enabled", arxiv_config.get("enabled", True))
+
+    # Fetch arXiv preprints
+    if preprints_enabled and arxiv_config.get("enabled", True):
+        logger.info("[Stage 0.1] Fetching arXiv preprints...")
         if args.test:
             arxiv_config = {**arxiv_config, "max_papers_per_day": 100}
         fetcher = ArxivFetcher(arxiv_config)
         arxiv_papers = fetcher.get_today_papers(debug=args.debug)
-        logger.info(f"  arXiv: {len(arxiv_papers)} papers")
+        logger.info(f"  arXiv preprints: {len(arxiv_papers)} papers")
         papers.extend(arxiv_papers)
 
-    # Fetch from journals (with deduplication)
+    # Fetch external preprint servers (bioRxiv / medRxiv)
+    preprint_sources = preprints_config.get("sources", [])
+    if preprints_enabled and preprint_sources and not args.test:
+        logger.info("[Stage 0.2] Fetching external preprints...")
+        preprint_fetcher = JournalFetcher(
+            {
+                "journals": preprint_sources,
+                "max_papers_per_journal": preprints_config.get("max_papers_per_source", 30),
+            },
+            paper_history=paper_history,
+        )
+        external_preprints = preprint_fetcher.get_papers(debug=args.debug)
+        logger.info(f"  External preprints: {len(external_preprints)} new papers")
+        papers.extend(external_preprints)
+
+    # Fetch journals (with deduplication)
     journals_config = config.get("journals", {})
     if journals_config.get("enabled", False) and not args.test:
-        logger.info("[Stage 0.2] Fetching from journals...")
+        logger.info("[Stage 0.3] Fetching journals...")
         journal_fetcher = JournalFetcher(
             {
                 "journals": journals_config.get("sources", []),
