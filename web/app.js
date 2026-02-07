@@ -44,6 +44,28 @@ function sortKeywordsAlphabetically(keywords) {
   );
 }
 
+function normalizeMetaList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[;\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function formatMetaList(value, limit = 0) {
+  const list = normalizeMetaList(value);
+  const deduped = Array.from(new Set(list));
+  const clipped = limit > 0 ? deduped.slice(0, limit) : deduped;
+  return escapeHtml(clipped.join(', '));
+}
+
 function showSkeletonSummary() {
   summaryEl.innerHTML = `
     <div class="skeleton skeleton-title"></div>
@@ -191,6 +213,26 @@ function collectUniquePapers(report) {
         ...(paper.matched_keywords || []),
       ]);
       existing.matched_keywords = Array.from(mergedKeywords);
+
+      const mergedAuthors = Array.from(
+        new Set([
+          ...normalizeMetaList(existing.authors),
+          ...normalizeMetaList(paper.authors),
+        ])
+      );
+      if (mergedAuthors.length) {
+        existing.authors = mergedAuthors;
+      }
+
+      const mergedAffiliations = Array.from(
+        new Set([
+          ...normalizeMetaList(existing.affiliations),
+          ...normalizeMetaList(paper.affiliations),
+        ])
+      );
+      if (mergedAffiliations.length) {
+        existing.affiliations = mergedAffiliations;
+      }
 
       const existingScore = existing.quality_score || 0;
       const nextScore = paper.quality_score || 0;
@@ -537,7 +579,14 @@ function renderPapers(report) {
         )
         .join('');
 
-      const authors = escapeHtml(paper.authors?.slice(0, 4).join(', ') || '');
+      const authors = formatMetaList(paper.authors, 4);
+      const affiliations = formatMetaList(paper.affiliations, 2);
+      const metaItems = [
+        authors ? `<div class="paper-meta-item"><span class="paper-meta-label">作者</span><span>${authors}</span></div>` : '',
+        affiliations ? `<div class="paper-meta-item"><span class="paper-meta-label">单位</span><span>${affiliations}</span></div>` : '',
+      ]
+        .filter(Boolean)
+        .join('');
       const abstractText = paper.summary || '';
       const abstractUrl = sanitizeUrl(paper.abstract_url || '');
       const remotePdfUrl = sanitizeUrl(paper.pdf_url || '');
@@ -621,7 +670,7 @@ function renderPapers(report) {
             <div class="paper-head-left">
               ${renderSourceBadges(paper)}
               <h3>${numberBadge}${paperTitle}</h3>
-              ${authors ? `<div class="paper-meta">${authors}</div>` : ''}
+              ${metaItems ? `<div class="paper-meta">${metaItems}</div>` : ''}
               ${tagButtons ? `<div class="paper-tags">${tagButtons}</div>` : ''}
             </div>
             <div class="paper-head-right">
