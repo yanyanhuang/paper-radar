@@ -26,6 +26,8 @@ class AnalyzerAgent:
 
 2. **核心内容分析**
    - TLDR（用1-2句简洁的话概括论文的核心问题、方法和贡献，让读者快速了解论文价值）
+   - Motivation（研究动机：该问题为什么重要，现有方法有什么痛点或缺口，2-4句）
+   - Background（研究背景：任务场景、领域上下文、与本文最相关的前置工作脉络，2-4句）
    - 主要贡献（3-5个要点）
    - 技术方法（简述核心方法论，100字以内）
    - 实验结果（关键数据和结论，100字以内）
@@ -57,6 +59,8 @@ class AnalyzerAgent:
     "authors": ["作者1", "作者2", "作者3"],
     "affiliations": ["机构1", "机构2"],
     "tldr": "一句话总结：简洁概括论文解决什么问题、用什么方法、取得什么效果（1-2句话，不超过100字）",
+    "motivation": "研究动机总结（2-4句）",
+    "background": "研究背景总结（2-4句）",
     "contributions": ["贡献1", "贡献2", "贡献3"],
     "methodology": "技术方法简述",
     "experiments": "实验结果简述",
@@ -208,6 +212,8 @@ class AnalyzerAgent:
                 authors=result.get("authors", paper.authors[:5]),
                 affiliations=result.get("affiliations", []),
                 tldr=result.get("tldr", ""),
+                motivation=result.get("motivation", ""),
+                background=result.get("background", ""),
                 contributions=result.get("contributions", []),
                 methodology=result.get("methodology", ""),
                 experiments=result.get("experiments", ""),

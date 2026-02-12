@@ -238,6 +238,8 @@ class Reporter:
             "affiliations": analysis.affiliations,
             "summary": summary,
             "tldr": analysis.tldr,
+            "motivation": analysis.motivation,
+            "background": analysis.background,
             "contributions": analysis.contributions,
             "methodology": analysis.methodology,
             "experiments": analysis.experiments,

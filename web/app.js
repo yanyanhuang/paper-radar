@@ -540,6 +540,31 @@ function renderInfoCard(label, content, icon) {
   `;
 }
 
+function buildMotivationOrBackground(paper) {
+  const directFields = [
+    paper?.motivation,
+    paper?.background,
+    paper?.motivation_background,
+    paper?.problem_background,
+    paper?.problem_statement,
+    paper?.research_gap,
+    paper?.context,
+  ];
+  const direct = directFields.find((value) => typeof value === 'string' && value.trim());
+  if (direct) return direct.trim();
+
+  const summary = typeof paper?.summary === 'string' ? paper.summary.replace(/\s+/g, ' ').trim() : '';
+  if (!summary) return '暂无 motivation/background 信息。';
+
+  const firstSentence = summary.match(/^.{1,280}?(?:[。！？.!?]|$)/u)?.[0]?.trim() || summary.slice(0, 280).trim();
+  if (!firstSentence) return '暂无 motivation/background 信息。';
+
+  if (firstSentence.length >= summary.length || /[。！？.!?]$/.test(firstSentence)) {
+    return firstSentence;
+  }
+  return `${firstSentence}...`;
+}
+
 function renderPapers(report) {
   const basePapers = getBasePapers(report);
   const papers = getFilteredPapers(report);
@@ -647,6 +672,15 @@ function renderPapers(report) {
             <div class="paper-tldr-content markdown">${renderMarkdown(tldrText)}</div>
           </div>`
         : '';
+      const motivationText = buildMotivationOrBackground(paper);
+      const motivationIcon =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -1px; margin-right: 4px;"><path d="M12 2v20"></path><path d="M2 12h20"></path></svg>';
+      const motivationHtml = `
+        <div class="paper-context">
+          <div class="paper-context-label">${motivationIcon}Motivation / Background</div>
+          <div class="markdown">${renderMarkdown(motivationText)}</div>
+        </div>
+      `;
 
       // Quality score badge
       const score = paper.quality_score || 0;
@@ -679,6 +713,7 @@ function renderPapers(report) {
             </div>
           </div>
           ${tldrHtml}
+          ${motivationHtml}
 
           <details class="paper-details">
             <summary>

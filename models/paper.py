@@ -73,6 +73,8 @@ class PaperAnalysis:
 
     # Analysis content
     tldr: str = ""
+    motivation: str = ""
+    background: str = ""
     contributions: list[str] = field(default_factory=list)
     methodology: str = ""
     experiments: str = ""
