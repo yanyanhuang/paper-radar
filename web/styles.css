@@ -180,6 +180,12 @@ body {
   color: var(--text-primary);
 }
 
+.control-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .clear-btn {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
@@ -191,6 +197,36 @@ body {
   font-family: inherit;
   cursor: pointer;
   transition: all var(--transition);
+}
+
+.fav-filter-btn {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.fav-filter-btn:hover {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #b45309;
+}
+
+.fav-filter-btn.active {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #92400e;
+}
+
+.fav-filter-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
 }
 
 .clear-btn:hover {
@@ -343,6 +379,10 @@ body {
 .paper-card:hover {
   border-color: var(--accent-border);
   box-shadow: var(--shadow-md);
+}
+
+.paper-card-favorited {
+  border-color: rgba(245, 158, 11, 0.35);
 }
 
 .paper-highlight {
@@ -745,7 +785,8 @@ body {
   border-top: 1px solid var(--border-light);
 }
 
-.paper-actions a {
+.paper-actions a,
+.paper-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -759,13 +800,16 @@ body {
   text-decoration: none;
 }
 
-.paper-actions a {
+.paper-actions a,
+.paper-actions button {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border: 1px solid var(--border);
+  font-family: inherit;
 }
 
-.paper-actions a:hover {
+.paper-actions a:hover,
+.paper-actions button:hover {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent-border);
@@ -779,6 +823,17 @@ body {
 
 .paper-actions a.secondary:hover {
   background: var(--accent-light);
+}
+
+.paper-actions .favorite-btn.is-favorited {
+  background: rgba(245, 158, 11, 0.2);
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.paper-actions .favorite-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
 }
 
 /* Footer */
@@ -983,6 +1038,14 @@ body {
     align-items: stretch;
   }
 
+  .control-actions {
+    width: 100%;
+  }
+
+  .control-actions button {
+    flex: 1;
+  }
+
   .clear-btn {
     width: 100%;
   }
@@ -1023,7 +1086,8 @@ body {
     flex-direction: column;
   }
 
-  .paper-actions a {
+  .paper-actions a,
+  .paper-actions button {
     width: 100%;
   }
 }

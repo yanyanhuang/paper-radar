@@ -4,11 +4,13 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,11 +18,83 @@ REPORTS_DIR = Path(os.getenv("REPORTS_DIR", BASE_DIR / "reports"))
 JSON_DIR = REPORTS_DIR / "json"
 WEB_DIR = BASE_DIR / "web"
 PDF_CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", BASE_DIR / "cache" / "pdfs"))
+FAVORITES_FILE = Path(os.getenv("FAVORITES_FILE", BASE_DIR / "cache" / "favorites.json"))
 
 app = FastAPI(title="PaperRadar Web")
+_favorites_lock = Lock()
 
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+
+class FavoriteUpsertRequest(BaseModel):
+    """Payload for creating/updating a favorite paper."""
+
+    paper_id: str
+    title: str = ""
+    pdf_url: str = ""
+    abstract_url: str = ""
+    source: str = ""
+    primary_category: str = ""
+    authors: list[str] = Field(default_factory=list)
+    matched_keywords: list[str] = Field(default_factory=list)
+    report_date: str = ""
+
+
+def _empty_favorites_payload() -> dict:
+    return {"favorites": {}, "last_updated": None}
+
+
+def _load_favorites_payload() -> dict:
+    if not FAVORITES_FILE.exists():
+        return _empty_favorites_payload()
+
+    try:
+        data = json.loads(FAVORITES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return _empty_favorites_payload()
+
+    favorites = data.get("favorites", {})
+    if not isinstance(favorites, dict):
+        favorites = {}
+
+    return {
+        "favorites": favorites,
+        "last_updated": data.get("last_updated"),
+    }
+
+
+def _save_favorites_payload(payload: dict) -> None:
+    FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload["last_updated"] = datetime.utcnow().isoformat()
+    FAVORITES_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _normalize_favorite_item(paper_id: str, raw: dict) -> dict:
+    authors = raw.get("authors", [])
+    if not isinstance(authors, list):
+        authors = []
+
+    matched_keywords = raw.get("matched_keywords", [])
+    if not isinstance(matched_keywords, list):
+        matched_keywords = []
+
+    return {
+        "paper_id": paper_id,
+        "title": str(raw.get("title", "")).strip(),
+        "pdf_url": str(raw.get("pdf_url", "")).strip(),
+        "abstract_url": str(raw.get("abstract_url", "")).strip(),
+        "source": str(raw.get("source", "")).strip(),
+        "primary_category": str(raw.get("primary_category", "")).strip(),
+        "authors": [str(a).strip() for a in authors if str(a).strip()],
+        "matched_keywords": [str(k).strip() for k in matched_keywords if str(k).strip()],
+        "report_date": str(raw.get("report_date", "")).strip(),
+        "favorited_at": str(raw.get("favorited_at", "")).strip(),
+        "updated_at": str(raw.get("updated_at", "")).strip(),
+    }
 
 
 def _list_report_files() -> list[Path]:
@@ -130,6 +204,82 @@ def list_dates():
 @app.get("/api/report")
 def get_report(date: Optional[str] = None):
     return _load_report(date)
+
+
+@app.get("/api/favorites")
+def list_favorites():
+    with _favorites_lock:
+        payload = _load_favorites_payload()
+        favorites = payload.get("favorites", {})
+        items = [
+            _normalize_favorite_item(paper_id, raw)
+            for paper_id, raw in favorites.items()
+            if str(paper_id).strip() and isinstance(raw, dict)
+        ]
+
+    items.sort(key=lambda item: item.get("favorited_at", ""), reverse=True)
+    paper_ids = [item["paper_id"] for item in items if item.get("paper_id")]
+
+    return {
+        "paper_ids": paper_ids,
+        "items": items,
+    }
+
+
+@app.put("/api/favorites")
+def upsert_favorite(payload: FavoriteUpsertRequest):
+    paper_id = str(payload.paper_id or "").strip()
+    if not paper_id:
+        raise HTTPException(status_code=400, detail="paper_id is required")
+
+    now = datetime.utcnow().isoformat()
+
+    with _favorites_lock:
+        favorites_payload = _load_favorites_payload()
+        favorites = favorites_payload.get("favorites", {})
+        existing = favorites.get(paper_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+
+        item = {
+            "paper_id": paper_id,
+            "title": str(payload.title or "").strip(),
+            "pdf_url": str(payload.pdf_url or "").strip(),
+            "abstract_url": str(payload.abstract_url or "").strip(),
+            "source": str(payload.source or "").strip(),
+            "primary_category": str(payload.primary_category or "").strip(),
+            "authors": [str(a).strip() for a in payload.authors if str(a).strip()],
+            "matched_keywords": [
+                str(k).strip() for k in payload.matched_keywords if str(k).strip()
+            ],
+            "report_date": str(payload.report_date or "").strip(),
+            "favorited_at": str(existing.get("favorited_at", now)).strip() or now,
+            "updated_at": now,
+        }
+        favorites[paper_id] = item
+        favorites_payload["favorites"] = favorites
+        _save_favorites_payload(favorites_payload)
+
+    return {"favorited": True, "item": item}
+
+
+@app.delete("/api/favorites")
+def remove_favorite(paper_id: str):
+    safe_id = str(paper_id or "").strip()
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="paper_id is required")
+
+    removed = False
+    with _favorites_lock:
+        favorites_payload = _load_favorites_payload()
+        favorites = favorites_payload.get("favorites", {})
+        if safe_id in favorites:
+            favorites.pop(safe_id, None)
+            favorites_payload["favorites"] = favorites
+            _save_favorites_payload(favorites_payload)
+            removed = True
+
+    return {"favorited": False, "paper_id": safe_id, "removed": removed}
 
 
 @app.get("/api/local-pdf")

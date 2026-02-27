@@ -6,6 +6,8 @@ const state = {
   query: '',
   sort: 'score',
   visibleCount: PAGE_SIZE,
+  favorites: new Set(),
+  onlyFavorites: false,
 };
 
 const dateSelect = document.getElementById('date-select');
@@ -14,6 +16,7 @@ const searchInput = document.getElementById('search-input');
 const sortSelect = document.getElementById('sort-select');
 const resultCountEl = document.getElementById('result-count');
 const clearFiltersBtn = document.getElementById('clear-filters');
+const favoritesToggleBtn = document.getElementById('favorites-toggle');
 const summaryEl = document.getElementById('summary');
 const papersEl = document.getElementById('papers');
 const trendsEl = document.getElementById('trends');
@@ -147,6 +150,59 @@ async function fetchReport(date) {
   return await res.json();
 }
 
+async function fetchFavoritePaperIds() {
+  const res = await fetch('/api/favorites');
+  if (!res.ok) {
+    throw new Error(`获取收藏失败（HTTP ${res.status}）`);
+  }
+  const payload = await res.json();
+  if (!Array.isArray(payload?.paper_ids)) return [];
+  return payload.paper_ids
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+}
+
+async function saveFavorite(paper, reportDate) {
+  const body = {
+    paper_id: String(getPaperKey(paper) || '').trim(),
+    title: String(paper?.title || '').trim(),
+    pdf_url: String(paper?.pdf_url || '').trim(),
+    abstract_url: String(paper?.abstract_url || '').trim(),
+    source: String(paper?.source || '').trim(),
+    primary_category: String(paper?.primary_category || '').trim(),
+    authors: normalizeMetaList(paper?.authors),
+    matched_keywords: normalizeMetaList(paper?.matched_keywords),
+    report_date: String(reportDate || '').trim(),
+  };
+
+  if (!body.paper_id) {
+    throw new Error('收藏失败：缺少论文 ID');
+  }
+
+  const res = await fetch('/api/favorites', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`收藏失败（HTTP ${res.status}）`);
+  }
+}
+
+async function removeFavorite(paperKey) {
+  const safeKey = String(paperKey || '').trim();
+  if (!safeKey) {
+    throw new Error('取消收藏失败：缺少论文 ID');
+  }
+
+  const res = await fetch(`/api/favorites?paper_id=${encodeURIComponent(safeKey)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    throw new Error(`取消收藏失败（HTTP ${res.status}）`);
+  }
+}
+
 function updateStats(report) {
   statDate.textContent = report.date || '-';
   statTotal.textContent = report.total_papers ?? '-';
@@ -247,6 +303,20 @@ function collectUniquePapers(report) {
 
 function getPaperKey(paper) {
   return paper?.id || paper?.arxiv_id || paper?.title || '';
+}
+
+function findPaperByKey(report, paperKey) {
+  const key = String(paperKey || '').trim();
+  if (!report || !key) return null;
+
+  for (const list of Object.values(report.papers_by_keyword || {})) {
+    for (const paper of list || []) {
+      if (getPaperKey(paper) === key) {
+        return paper;
+      }
+    }
+  }
+  return null;
 }
 
 function getBasePapers(report) {
@@ -358,6 +428,14 @@ function renderSourceBadges(paper) {
   return `<div class="source-badges">${badges.join('')}</div>`;
 }
 
+function updateFavoriteFilterButton() {
+  if (!favoritesToggleBtn) return;
+  const favoriteCount = state.favorites.size;
+  const labelPrefix = state.onlyFavorites ? '只看收藏' : '收藏筛选';
+  favoritesToggleBtn.textContent = `${labelPrefix}（${favoriteCount}）`;
+  favoritesToggleBtn.classList.toggle('active', state.onlyFavorites);
+}
+
 function updateControlBar({ baseTotal, filteredTotal, visibleTotal }) {
   const base = Number(baseTotal) || 0;
   const filtered = Number(filteredTotal) || 0;
@@ -366,16 +444,19 @@ function updateControlBar({ baseTotal, filteredTotal, visibleTotal }) {
   const filterHint = state.query.trim()
     ? `（搜索：${escapeHtml(state.query.trim().slice(0, 20))}${state.query.trim().length > 20 ? '…' : ''}）`
     : '';
+  const favoriteHint = state.onlyFavorites ? '（仅收藏）' : '';
 
   const pagingHint = filtered > visible ? ` · 已显示 ${visible} / ${filtered}` : '';
-  resultCountEl.innerHTML = `结果：<strong>${filtered}</strong> / ${base}${filterHint}${pagingHint}`;
+  resultCountEl.innerHTML = `结果：<strong>${filtered}</strong> / ${base}${favoriteHint}${filterHint}${pagingHint}`;
 
   const isDefault =
     state.keyword === 'all' &&
     !state.query.trim() &&
     state.sort === 'score' &&
-    state.visibleCount === PAGE_SIZE;
+    state.visibleCount === PAGE_SIZE &&
+    !state.onlyFavorites;
   clearFiltersBtn.disabled = isDefault;
+  updateFavoriteFilterButton();
 }
 
 function updateSortOptions() {
@@ -500,6 +581,10 @@ function getFilteredPapers(report) {
     });
   }
 
+  if (state.onlyFavorites) {
+    papers = papers.filter((paper) => state.favorites.has(getPaperKey(paper)));
+  }
+
   // Sort
   const sort = state.sort;
   if (sort === 'published') {
@@ -574,13 +659,14 @@ function renderPapers(report) {
   updateControlBar({ baseTotal: basePapers.length, filteredTotal: total, visibleTotal });
 
   if (!total) {
+    const emptyMessage = state.onlyFavorites ? '当前筛选下没有收藏论文' : '暂无匹配结果';
     papersEl.innerHTML = `
       <div class="empty-state">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        <p>暂无匹配结果</p>
+        <p>${emptyMessage}</p>
       </div>
     `;
     return;
@@ -620,6 +706,7 @@ function renderPapers(report) {
       const codeUrl = sanitizeUrl(paper.code_url || '');
 
       const paperKey = getPaperKey(paper);
+      const isFavorited = state.favorites.has(paperKey);
       const paperNumber = keyword === 'all' ? null : getPaperNumber(paper, paperNumberById, index + 1);
       const cardId =
         keyword === 'all'
@@ -699,7 +786,7 @@ function renderPapers(report) {
       const relDisplay = published.relative ? `<span class="paper-date-rel">· ${escapeHtml(published.relative)}</span>` : '';
 
       return `
-        <article class="paper-card" id="${cardId}" data-paper-key="${escapeHtml(paperKey)}">
+        <article class="paper-card ${isFavorited ? 'paper-card-favorited' : ''}" id="${cardId}" data-paper-key="${escapeHtml(paperKey)}">
           <div class="paper-head">
             <div class="paper-head-left">
               ${renderSourceBadges(paper)}
@@ -743,6 +830,9 @@ function renderPapers(report) {
           </details>
 
           <div class="paper-actions">
+            <button type="button" class="favorite-btn ${isFavorited ? 'is-favorited' : ''}" data-action="toggle-favorite" title="${isFavorited ? '取消收藏' : '收藏'}">
+              ${isFavorited ? '已收藏' : '收藏'}
+            </button>
             ${abstractUrl ? `<a class="secondary" href="${escapeHtml(abstractUrl)}" target="_blank" rel="noreferrer noopener">页面</a>` : ''}
             ${pdfActionUrl ? `<a href="${escapeHtml(pdfActionUrl)}" target="_blank" rel="noreferrer noopener">PDF</a>` : ''}
             ${codeUrl ? `<a href="${escapeHtml(codeUrl)}" target="_blank" rel="noreferrer noopener">代码</a>` : ''}
@@ -1103,6 +1193,34 @@ function fillKeywordOptions(report) {
   });
 }
 
+function setFavoritesFromPaperIds(paperIds) {
+  const ids = Array.isArray(paperIds)
+    ? paperIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+  state.favorites = new Set(ids);
+  updateFavoriteFilterButton();
+}
+
+async function toggleFavoriteByPaperKey(paperKey) {
+  const safeKey = String(paperKey || '').trim();
+  if (!safeKey || !state.report) return;
+
+  const isFavorited = state.favorites.has(safeKey);
+  if (isFavorited) {
+    await removeFavorite(safeKey);
+    state.favorites.delete(safeKey);
+  } else {
+    const paper = findPaperByKey(state.report, safeKey);
+    if (!paper) {
+      throw new Error('未找到对应论文，无法收藏');
+    }
+    await saveFavorite(paper, state.report?.date);
+    state.favorites.add(safeKey);
+  }
+
+  renderPapers(state.report);
+}
+
 async function loadReportForDate(date, { resetFilters = true } = {}) {
   const token = (reportLoadToken += 1);
   clearPeekedCard();
@@ -1122,6 +1240,7 @@ async function loadReportForDate(date, { resetFilters = true } = {}) {
       state.query = '';
       state.sort = 'score';
       state.visibleCount = PAGE_SIZE;
+      state.onlyFavorites = false;
       keywordSelect.value = 'all';
       searchInput.value = '';
     }
@@ -1155,9 +1274,25 @@ async function init() {
   showSkeletonPapers();
   resultCountEl.textContent = '-';
   clearFiltersBtn.disabled = true;
+  updateFavoriteFilterButton();
 
   try {
-    const dates = await fetchDates();
+    const [datesResult, favoritesResult] = await Promise.allSettled([
+      fetchDates(),
+      fetchFavoritePaperIds(),
+    ]);
+
+    if (datesResult.status !== 'fulfilled') {
+      throw datesResult.reason;
+    }
+    const dates = datesResult.value;
+    if (favoritesResult.status === 'fulfilled') {
+      setFavoritesFromPaperIds(favoritesResult.value);
+    } else {
+      setFavoritesFromPaperIds([]);
+      console.warn(favoritesResult.reason);
+    }
+
     if (token !== datesLoadToken) return;
 
     if (!dates.length) {
@@ -1231,11 +1366,20 @@ sortSelect.addEventListener('change', (event) => {
   renderPapers(state.report);
 });
 
+if (favoritesToggleBtn) {
+  favoritesToggleBtn.addEventListener('click', () => {
+    state.onlyFavorites = !state.onlyFavorites;
+    state.visibleCount = PAGE_SIZE;
+    renderPapers(state.report);
+  });
+}
+
 clearFiltersBtn.addEventListener('click', () => {
   state.keyword = 'all';
   state.query = '';
   state.sort = 'score';
   state.visibleCount = PAGE_SIZE;
+  state.onlyFavorites = false;
   keywordSelect.value = 'all';
   searchInput.value = '';
   updateSortOptions();
@@ -1293,11 +1437,29 @@ summaryEl.addEventListener('focusout', (event) => {
   clearPeekedCard();
 });
 
-papersEl.addEventListener('click', (event) => {
+papersEl.addEventListener('click', async (event) => {
   const loadMore = event.target.closest('.load-more');
   if (loadMore) {
     state.visibleCount = state.visibleCount + PAGE_SIZE;
     renderPapers(state.report);
+    return;
+  }
+
+  const favoriteBtn = event.target.closest('[data-action="toggle-favorite"]');
+  if (favoriteBtn) {
+    const card = favoriteBtn.closest('.paper-card');
+    const paperKey = card?.getAttribute('data-paper-key');
+    if (!paperKey) return;
+
+    favoriteBtn.disabled = true;
+    try {
+      await toggleFavoriteByPaperKey(paperKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '收藏操作失败，请稍后再试。';
+      window.alert(message);
+    } finally {
+      favoriteBtn.disabled = false;
+    }
     return;
   }
 
