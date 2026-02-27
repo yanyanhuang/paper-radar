@@ -39,6 +39,7 @@ class FavoriteUpsertRequest(BaseModel):
     authors: list[str] = Field(default_factory=list)
     matched_keywords: list[str] = Field(default_factory=list)
     report_date: str = ""
+    paper_data: dict = Field(default_factory=dict)
 
 
 def _empty_favorites_payload() -> dict:
@@ -82,6 +83,10 @@ def _normalize_favorite_item(paper_id: str, raw: dict) -> dict:
     if not isinstance(matched_keywords, list):
         matched_keywords = []
 
+    paper_data = raw.get("paper_data", {})
+    if not isinstance(paper_data, dict):
+        paper_data = {}
+
     return {
         "paper_id": paper_id,
         "title": str(raw.get("title", "")).strip(),
@@ -94,6 +99,7 @@ def _normalize_favorite_item(paper_id: str, raw: dict) -> dict:
         "report_date": str(raw.get("report_date", "")).strip(),
         "favorited_at": str(raw.get("favorited_at", "")).strip(),
         "updated_at": str(raw.get("updated_at", "")).strip(),
+        "paper_data": paper_data,
     }
 
 
@@ -274,6 +280,7 @@ def upsert_favorite(payload: FavoriteUpsertRequest):
             "report_date": str(payload.report_date or "").strip(),
             "favorited_at": str(existing.get("favorited_at", now)).strip() or now,
             "updated_at": now,
+            "paper_data": payload.paper_data if isinstance(payload.paper_data, dict) else {},
         }
         favorites[paper_id] = item
         favorites_payload["favorites"] = favorites

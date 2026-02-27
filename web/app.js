@@ -7,6 +7,7 @@ const state = {
   sort: 'score',
   visibleCount: PAGE_SIZE,
   favorites: new Set(),
+  favoriteItemsById: new Map(),
   onlyFavorites: false,
 };
 
@@ -150,20 +151,26 @@ async function fetchReport(date) {
   return await res.json();
 }
 
-async function fetchFavoritePaperIds() {
+async function fetchFavorites() {
   const res = await fetch('/api/favorites');
   if (!res.ok) {
     throw new Error(`获取收藏失败（HTTP ${res.status}）`);
   }
   const payload = await res.json();
-  if (!Array.isArray(payload?.paper_ids)) return [];
-  return payload.paper_ids
-    .map((id) => String(id || '').trim())
-    .filter(Boolean);
+  const paperIds = Array.isArray(payload?.paper_ids)
+    ? payload.paper_ids
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+    : [];
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return {
+    paper_ids: paperIds,
+    items,
+  };
 }
 
-async function saveFavorite(paper, reportDate) {
-  const body = {
+function buildFavoriteItemFromPaper(paper, reportDate) {
+  return {
     paper_id: String(getPaperKey(paper) || '').trim(),
     title: String(paper?.title || '').trim(),
     pdf_url: String(paper?.pdf_url || '').trim(),
@@ -173,7 +180,133 @@ async function saveFavorite(paper, reportDate) {
     authors: normalizeMetaList(paper?.authors),
     matched_keywords: normalizeMetaList(paper?.matched_keywords),
     report_date: String(reportDate || '').trim(),
+    paper_data: {
+      ...paper,
+      id: String(getPaperKey(paper) || '').trim(),
+    },
   };
+}
+
+function coerceFavoritePaper(item) {
+  const paperId = String(item?.paper_id || '').trim();
+  const paperData = item?.paper_data && typeof item.paper_data === 'object' ? { ...item.paper_data } : {};
+
+  if (!paperData.id && !paperData.arxiv_id) {
+    paperData.id = paperId;
+  }
+  if (!paperData.title) {
+    paperData.title = String(item?.title || paperId || 'Untitled');
+  }
+  if (!Array.isArray(paperData.authors)) {
+    paperData.authors = normalizeMetaList(item?.authors);
+  }
+  if (!Array.isArray(paperData.matched_keywords)) {
+    paperData.matched_keywords = normalizeMetaList(item?.matched_keywords);
+  }
+  if (!paperData.pdf_url) {
+    paperData.pdf_url = String(item?.pdf_url || '').trim();
+  }
+  if (!paperData.abstract_url) {
+    paperData.abstract_url = String(item?.abstract_url || '').trim();
+  }
+  if (!paperData.source) {
+    paperData.source = String(item?.source || '').trim();
+  }
+  if (!paperData.primary_category) {
+    paperData.primary_category = String(item?.primary_category || '').trim();
+  }
+  if (!paperData.summary) {
+    paperData.summary = '';
+  }
+  if (!paperData.tldr) {
+    paperData.tldr = '';
+  }
+  if (!paperData.motivation) {
+    paperData.motivation = '';
+  }
+  if (!paperData.background) {
+    paperData.background = '';
+  }
+  if (!Array.isArray(paperData.contributions)) {
+    paperData.contributions = [];
+  }
+  if (!paperData.methodology) {
+    paperData.methodology = '';
+  }
+  if (!paperData.experiments) {
+    paperData.experiments = '';
+  }
+  if (!Array.isArray(paperData.innovations)) {
+    paperData.innovations = [];
+  }
+  if (!Array.isArray(paperData.limitations)) {
+    paperData.limitations = [];
+  }
+  if (!paperData.dataset_info) {
+    paperData.dataset_info = '';
+  }
+  if (!paperData.code_url) {
+    paperData.code_url = '';
+  }
+  if (typeof paperData.quality_score !== 'number') {
+    paperData.quality_score = 0;
+  }
+  if (!paperData.score_reason) {
+    paperData.score_reason = '';
+  }
+
+  return paperData;
+}
+
+function getFavoritePapers(report) {
+  const reportMap = new Map();
+  for (const paper of collectUniquePapers(report)) {
+    reportMap.set(getPaperKey(paper), paper);
+  }
+
+  const papers = [];
+  for (const paperId of state.favorites) {
+    const fromReport = reportMap.get(paperId);
+    if (fromReport) {
+      papers.push(fromReport);
+      continue;
+    }
+
+    const item = state.favoriteItemsById.get(paperId);
+    if (!item) continue;
+    papers.push(coerceFavoritePaper(item));
+  }
+  return papers;
+}
+
+function setFavoritesFromPayload(payload) {
+  const paperIds = Array.isArray(payload?.paper_ids)
+    ? payload.paper_ids
+    .map((id) => String(id || '').trim())
+    .filter(Boolean)
+    : [];
+
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+
+  state.favorites = new Set(paperIds);
+  state.favoriteItemsById = new Map();
+  for (const item of items) {
+    const paperId = String(item?.paper_id || '').trim();
+    if (!paperId) continue;
+    state.favoriteItemsById.set(paperId, item);
+  }
+
+  for (const paperId of state.favorites) {
+    if (!state.favoriteItemsById.has(paperId)) {
+      state.favoriteItemsById.set(paperId, { paper_id: paperId });
+    }
+  }
+
+  updateFavoriteFilterButton();
+}
+
+async function saveFavorite(paper, reportDate) {
+  const body = buildFavoriteItemFromPaper(paper, reportDate);
 
   if (!body.paper_id) {
     throw new Error('收藏失败：缺少论文 ID');
@@ -321,6 +454,7 @@ function findPaperByKey(report, paperKey) {
 
 function getBasePapers(report) {
   if (!report) return [];
+  if (state.onlyFavorites) return getFavoritePapers(report);
   if (state.keyword === 'all') return collectUniquePapers(report);
   return report.papers_by_keyword?.[state.keyword] || [];
 }
@@ -463,16 +597,16 @@ function updateSortOptions() {
   const keyword = state.keyword;
   const previous = state.sort;
 
-  const options = keyword === 'all'
+  const options = (keyword !== 'all' && !state.onlyFavorites)
     ? [
-        { value: 'score', label: '按评分' },
-        { value: 'published', label: '按发布时间' },
-      ]
+      { value: 'number', label: '按编号' },
+      { value: 'score', label: '按评分' },
+      { value: 'published', label: '按发布时间' },
+    ]
     : [
-        { value: 'number', label: '按编号' },
-        { value: 'score', label: '按评分' },
-        { value: 'published', label: '按发布时间' },
-      ];
+      { value: 'score', label: '按评分' },
+      { value: 'published', label: '按发布时间' },
+    ];
 
   sortSelect.innerHTML = '';
   for (const opt of options) {
@@ -484,7 +618,7 @@ function updateSortOptions() {
 
   const allowed = new Set(options.map((o) => o.value));
   if (!allowed.has(previous)) {
-    state.sort = keyword === 'all' ? 'score' : 'number';
+    state.sort = (keyword !== 'all' && !state.onlyFavorites) ? 'number' : 'score';
   }
 
   sortSelect.value = state.sort;
@@ -560,6 +694,15 @@ function getFilteredPapers(report) {
   const keyword = state.keyword;
   const query = state.query.trim().toLowerCase();
   let papers = getBasePapers(report);
+
+  if (state.onlyFavorites && keyword !== 'all') {
+    const keywordLower = String(keyword).toLowerCase();
+    papers = papers.filter((paper) => {
+      const tags = normalizeMetaList(paper?.matched_keywords).map((tag) => String(tag).toLowerCase());
+      const cat = String(paper?.primary_category || '').toLowerCase();
+      return tags.includes(keywordLower) || cat.includes(keywordLower);
+    });
+  }
 
   // Filter by search query
   if (query) {
@@ -1193,14 +1336,6 @@ function fillKeywordOptions(report) {
   });
 }
 
-function setFavoritesFromPaperIds(paperIds) {
-  const ids = Array.isArray(paperIds)
-    ? paperIds.map((id) => String(id || '').trim()).filter(Boolean)
-    : [];
-  state.favorites = new Set(ids);
-  updateFavoriteFilterButton();
-}
-
 async function toggleFavoriteByPaperKey(paperKey) {
   const safeKey = String(paperKey || '').trim();
   if (!safeKey || !state.report) return;
@@ -1209,6 +1344,7 @@ async function toggleFavoriteByPaperKey(paperKey) {
   if (isFavorited) {
     await removeFavorite(safeKey);
     state.favorites.delete(safeKey);
+    state.favoriteItemsById.delete(safeKey);
   } else {
     const paper = findPaperByKey(state.report, safeKey);
     if (!paper) {
@@ -1216,6 +1352,7 @@ async function toggleFavoriteByPaperKey(paperKey) {
     }
     await saveFavorite(paper, state.report?.date);
     state.favorites.add(safeKey);
+    state.favoriteItemsById.set(safeKey, buildFavoriteItemFromPaper(paper, state.report?.date));
   }
 
   renderPapers(state.report);
@@ -1240,7 +1377,6 @@ async function loadReportForDate(date, { resetFilters = true } = {}) {
       state.query = '';
       state.sort = 'score';
       state.visibleCount = PAGE_SIZE;
-      state.onlyFavorites = false;
       keywordSelect.value = 'all';
       searchInput.value = '';
     }
@@ -1279,7 +1415,7 @@ async function init() {
   try {
     const [datesResult, favoritesResult] = await Promise.allSettled([
       fetchDates(),
-      fetchFavoritePaperIds(),
+      fetchFavorites(),
     ]);
 
     if (datesResult.status !== 'fulfilled') {
@@ -1287,9 +1423,9 @@ async function init() {
     }
     const dates = datesResult.value;
     if (favoritesResult.status === 'fulfilled') {
-      setFavoritesFromPaperIds(favoritesResult.value);
+      setFavoritesFromPayload(favoritesResult.value);
     } else {
-      setFavoritesFromPaperIds([]);
+      setFavoritesFromPayload({ paper_ids: [], items: [] });
       console.warn(favoritesResult.reason);
     }
 
@@ -1328,7 +1464,7 @@ dateSelect.addEventListener('change', async (event) => {
 
 keywordSelect.addEventListener('change', (event) => {
   state.keyword = event.target.value;
-  state.sort = state.keyword === 'all' ? 'score' : 'number';
+  state.sort = (state.keyword === 'all' || state.onlyFavorites) ? 'score' : 'number';
   state.visibleCount = PAGE_SIZE;
   updateSortOptions();
   updateSummary(state.report);
@@ -1342,7 +1478,7 @@ trendsEl.addEventListener('click', (event) => {
   if (!keyword) return;
   if (!state.report?.keywords?.includes(keyword)) return;
   state.keyword = keyword;
-  state.sort = 'number';
+  state.sort = state.onlyFavorites ? 'score' : 'number';
   state.visibleCount = PAGE_SIZE;
   keywordSelect.value = keyword;
   updateSortOptions();
@@ -1370,6 +1506,10 @@ if (favoritesToggleBtn) {
   favoritesToggleBtn.addEventListener('click', () => {
     state.onlyFavorites = !state.onlyFavorites;
     state.visibleCount = PAGE_SIZE;
+    if (state.onlyFavorites && state.sort === 'number') {
+      state.sort = 'score';
+    }
+    updateSortOptions();
     renderPapers(state.report);
   });
 }
@@ -1479,7 +1619,7 @@ papersEl.addEventListener('click', async (event) => {
 
   if (state.report?.keywords?.includes(tag)) {
     state.keyword = tag;
-    state.sort = 'number';
+    state.sort = state.onlyFavorites ? 'score' : 'number';
     state.visibleCount = PAGE_SIZE;
     keywordSelect.value = tag;
     updateSortOptions();
