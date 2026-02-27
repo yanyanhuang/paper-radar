@@ -181,9 +181,28 @@ def _find_cached_pdf(
     return None
 
 
+def _static_asset_version(filename: str) -> str:
+    """Return a stable cache-busting version derived from file mtime."""
+    path = WEB_DIR / filename
+    if not path.exists():
+        return "0"
+    return str(int(path.stat().st_mtime))
+
+
 @app.get("/")
 def index():
-    return HTMLResponse((WEB_DIR / "index.html").read_text(encoding="utf-8"))
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    css_version = _static_asset_version("styles.css")
+    js_version = _static_asset_version("app.js")
+    html = html.replace(
+        '/static/styles.css"',
+        f'/static/styles.css?v={css_version}"',
+    )
+    html = html.replace(
+        '/static/app.js"',
+        f'/static/app.js?v={js_version}"',
+    )
+    return HTMLResponse(html)
 
 
 @app.get("/api/health")
