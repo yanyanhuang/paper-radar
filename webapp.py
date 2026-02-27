@@ -137,6 +137,106 @@ def _load_report(date: Optional[str] = None) -> dict:
     return json.loads(files[0].read_text(encoding="utf-8"))
 
 
+def _has_rich_paper_data(paper_data: dict) -> bool:
+    if not isinstance(paper_data, dict):
+        return False
+
+    rich_fields = [
+        "summary",
+        "tldr",
+        "motivation",
+        "background",
+        "methodology",
+        "experiments",
+        "contributions",
+        "innovations",
+        "limitations",
+        "dataset_info",
+        "score_reason",
+    ]
+    for field in rich_fields:
+        value = paper_data.get(field)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return False
+
+
+def _extract_paper_snapshot_from_report(report: dict, paper_id: str) -> Optional[dict]:
+    if not isinstance(report, dict):
+        return None
+    target_id = str(paper_id or "").strip()
+    if not target_id:
+        return None
+
+    best_snapshot = None
+    best_score = -1
+    papers_by_keyword = report.get("papers_by_keyword", {})
+    if not isinstance(papers_by_keyword, dict):
+        return None
+
+    for papers in papers_by_keyword.values():
+        if not isinstance(papers, list):
+            continue
+        for paper in papers:
+            if not isinstance(paper, dict):
+                continue
+            candidate_id = str(paper.get("id") or paper.get("arxiv_id") or "").strip()
+            if candidate_id != target_id:
+                continue
+
+            score = sum(
+                1
+                for key in (
+                    "summary",
+                    "tldr",
+                    "motivation",
+                    "background",
+                    "methodology",
+                    "experiments",
+                    "contributions",
+                    "innovations",
+                    "limitations",
+                    "dataset_info",
+                    "quality_score",
+                    "score_reason",
+                )
+                if paper.get(key)
+            )
+
+            if score > best_score:
+                best_score = score
+                best_snapshot = dict(paper)
+
+    return best_snapshot
+
+
+def _find_paper_snapshot_across_reports(
+    paper_id: str, cache: dict[str, Optional[dict]]
+) -> Optional[dict]:
+    target_id = str(paper_id or "").strip()
+    if not target_id:
+        return None
+
+    if target_id in cache:
+        return cache[target_id]
+
+    for path in _list_report_files():
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        snapshot = _extract_paper_snapshot_from_report(report, target_id)
+        if snapshot:
+            cache[target_id] = snapshot
+            return snapshot
+
+    cache[target_id] = None
+    return None
+
+
 def _sanitize_paper_id(paper_id: str) -> str:
     return str(paper_id or "").strip().replace("/", "_").replace(":", "_")
 
@@ -233,21 +333,46 @@ def get_report(date: Optional[str] = None):
 
 @app.get("/api/favorites")
 def list_favorites():
+    snapshot_cache: dict[str, Optional[dict]] = {}
+
     with _favorites_lock:
         payload = _load_favorites_payload()
         favorites = payload.get("favorites", {})
-        items = [
-            _normalize_favorite_item(paper_id, raw)
-            for paper_id, raw in favorites.items()
-            if str(paper_id).strip() and isinstance(raw, dict)
-        ]
+        should_save = False
+        normalized_items: list[dict] = []
 
-    items.sort(key=lambda item: item.get("favorited_at", ""), reverse=True)
-    paper_ids = [item["paper_id"] for item in items if item.get("paper_id")]
+        for paper_id, raw in favorites.items():
+            if not str(paper_id).strip() or not isinstance(raw, dict):
+                continue
+
+            item = _normalize_favorite_item(paper_id, raw)
+            existing_data = item.get("paper_data", {})
+            needs_backfill = not _has_rich_paper_data(existing_data)
+            if needs_backfill:
+                snapshot = _find_paper_snapshot_across_reports(paper_id, snapshot_cache)
+                if snapshot:
+                    item["paper_data"] = snapshot
+                    raw["paper_data"] = snapshot
+                    # Keep top-level fields in sync for compatibility
+                    if not raw.get("title"):
+                        raw["title"] = snapshot.get("title", "")
+                    if not raw.get("pdf_url"):
+                        raw["pdf_url"] = snapshot.get("pdf_url", "")
+                    if not raw.get("abstract_url"):
+                        raw["abstract_url"] = snapshot.get("abstract_url", "")
+                    should_save = True
+            normalized_items.append(item)
+
+        if should_save:
+            payload["favorites"] = favorites
+            _save_favorites_payload(payload)
+
+    normalized_items.sort(key=lambda item: item.get("favorited_at", ""), reverse=True)
+    paper_ids = [item["paper_id"] for item in normalized_items if item.get("paper_id")]
 
     return {
         "paper_ids": paper_ids,
-        "items": items,
+        "items": normalized_items,
     }
 
 
