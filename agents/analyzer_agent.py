@@ -163,15 +163,15 @@ class AnalyzerAgent:
         self,
         paper: Paper,
         matched_keywords: list[str],
-        pdf_base64: str,
+        pdf_base64: Optional[str] = None,
     ) -> PaperAnalysis:
         """
-        Analyze a single paper using its PDF.
+        Analyze a single paper using its PDF, or abstract as fallback.
 
         Args:
             paper: Paper metadata
             matched_keywords: Keywords the paper matched
-            pdf_base64: Base64 encoded PDF content
+            pdf_base64: Base64 encoded PDF content (None to use abstract)
 
         Returns:
             PaperAnalysis with analysis results
@@ -182,14 +182,24 @@ class AnalyzerAgent:
         )
 
         try:
-            # Apply rate limiting before making request
             self._wait_for_rate_limit()
 
-            response = self.llm.chat_with_pdf(
-                prompt=prompt,
-                pdf_base64=pdf_base64,
-                max_tokens=4000,
-            )
+            if pdf_base64:
+                response = self.llm.chat_with_pdf(
+                    prompt=prompt,
+                    pdf_base64=pdf_base64,
+                    max_tokens=4000,
+                )
+            else:
+                abstract_text = (
+                    f"Title: {paper.title}\n"
+                    f"Authors: {', '.join(paper.authors[:10])}\n"
+                    f"Abstract: {paper.summary}\n"
+                )
+                response = self.llm.chat(
+                    messages=[{"role": "user", "content": f"{prompt}\n\n{abstract_text}"}],
+                    max_tokens=4000,
+                )
 
             result = self._parse_response(response)
 
@@ -300,20 +310,23 @@ class AnalyzerAgent:
                 )
 
             if not pdf_base64:
-                logger.warning(f"  ✗ Failed to download PDF")
-                analyses.append(
-                    PaperAnalysis(
-                        arxiv_id=paper.arxiv_id,
-                        pdf_url=paper.pdf_url,
-                        matched_keywords=fr.matched_keywords,
-                        paper=paper,
-                        success=False,
-                        error="Failed to download PDF",
+                if paper.summary:
+                    logger.info(f"  ↓ PDF unavailable, analyzing from abstract")
+                else:
+                    logger.warning(f"  ✗ No PDF and no abstract available")
+                    analyses.append(
+                        PaperAnalysis(
+                            arxiv_id=paper.arxiv_id,
+                            pdf_url=paper.pdf_url,
+                            matched_keywords=fr.matched_keywords,
+                            paper=paper,
+                            success=False,
+                            error="Failed to download PDF and no abstract",
+                        )
                     )
-                )
-                continue
+                    continue
 
-            # Analyze
+            # Analyze (with PDF if available, otherwise abstract)
             analysis = self.analyze_paper(
                 paper,
                 fr.matched_keywords,
