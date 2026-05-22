@@ -162,7 +162,7 @@ class PDFHandler:
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        options.set_capability("prefs", {
+        options.add_experimental_option("prefs", {
             "download.default_directory": self._browser_download_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
