@@ -9,6 +9,8 @@ const state = {
   favorites: new Set(),
   favoriteItemsById: new Map(),
   onlyFavorites: false,
+  showPreprint: true,
+  showJournal: true,
 };
 
 const dateSelect = document.getElementById('date-select');
@@ -588,7 +590,9 @@ function updateControlBar({ baseTotal, filteredTotal, visibleTotal }) {
     !state.query.trim() &&
     state.sort === 'score' &&
     state.visibleCount === PAGE_SIZE &&
-    !state.onlyFavorites;
+    !state.onlyFavorites &&
+    state.showPreprint &&
+    state.showJournal;
   clearFiltersBtn.disabled = isDefault;
   updateFavoriteFilterButton();
 }
@@ -677,14 +681,14 @@ function updateTrends(report) {
         <span class="trend-sub">去重后的论文来源分布</span>
       </div>
       <div class="trend-metrics">
-        <div>
+        <button type="button" class="source-toggle${state.showPreprint ? ' active' : ''}" data-source="preprint">
           <span class="trend-label">预印本</span>
           <span class="trend-value">${preprintCount}</span>
-        </div>
-        <div>
+        </button>
+        <button type="button" class="source-toggle${state.showJournal ? ' active' : ''}" data-source="journal">
           <span class="trend-label">期刊</span>
           <span class="trend-value">${journalCount}</span>
-        </div>
+        </button>
       </div>
     </div>
   `;
@@ -701,6 +705,15 @@ function getFilteredPapers(report) {
       const tags = normalizeMetaList(paper?.matched_keywords).map((tag) => String(tag).toLowerCase());
       const cat = String(paper?.primary_category || '').toLowerCase();
       return tags.includes(keywordLower) || cat.includes(keywordLower);
+    });
+  }
+
+  // Filter by source type
+  if (!state.showPreprint || !state.showJournal) {
+    papers = papers.filter((paper) => {
+      const type = resolveSourceType(paper);
+      if (type === 'journal') return state.showJournal;
+      return state.showPreprint;
     });
   }
 
@@ -1520,10 +1533,31 @@ clearFiltersBtn.addEventListener('click', () => {
   state.sort = 'score';
   state.visibleCount = PAGE_SIZE;
   state.onlyFavorites = false;
+  state.showPreprint = true;
+  state.showJournal = true;
   keywordSelect.value = 'all';
   searchInput.value = '';
   updateSortOptions();
+  updateTrends(state.report);
   updateSummary(state.report);
+  renderPapers(state.report);
+});
+
+trendsEl.addEventListener('click', (event) => {
+  const toggle = event.target.closest('.source-toggle');
+  if (!toggle) return;
+  const source = toggle.dataset.source;
+  if (source === 'preprint') {
+    state.showPreprint = !state.showPreprint;
+  } else if (source === 'journal') {
+    state.showJournal = !state.showJournal;
+  }
+  if (!state.showPreprint && !state.showJournal) {
+    state.showPreprint = true;
+    state.showJournal = true;
+  }
+  state.visibleCount = PAGE_SIZE;
+  updateTrends(state.report);
   renderPapers(state.report);
 });
 

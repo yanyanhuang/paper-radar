@@ -329,6 +329,32 @@ body {
   color: var(--text-primary);
 }
 
+.source-toggle {
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  opacity: 0.45;
+}
+.source-toggle:hover {
+  border-color: var(--accent);
+}
+.source-toggle.active {
+  opacity: 1;
+  border-color: var(--accent);
+  background: rgba(37, 99, 235, 0.06);
+}
+.source-toggle .trend-label::after {
+  content: ' \2713';
+  display: none;
+}
+.source-toggle.active .trend-label::after {
+  display: inline;
+}
+
 /* Content */
 .content {
   display: grid;
