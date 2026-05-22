@@ -18,26 +18,23 @@ from loguru import logger
 class PDFHandler:
     """Handles PDF download and base64 encoding."""
 
+    CLOUDFLARE_DOMAINS = {"biorxiv.org", "medrxiv.org"}
+
     def __init__(
         self,
         timeout: int = 120,
         cache_dir: Optional[str] = None,
         compression_timeout: int = 120,
         compression_profile: str = "/ebook",
+        browser_fallback: bool = False,
     ):
-        """
-        Initialize the PDF handler.
-
-        Args:
-            timeout: Request timeout in seconds
-            cache_dir: Optional directory to cache downloaded PDFs
-            compression_timeout: PDF compression timeout in seconds
-            compression_profile: Ghostscript PDFSETTINGS profile
-        """
         self.timeout = timeout
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.compression_timeout = compression_timeout
         self.compression_profile = compression_profile
+        self.browser_fallback = browser_fallback
+        self._browser_driver = None
+        self._browser_download_dir = None
 
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -104,11 +101,148 @@ class PDFHandler:
             logger.error(f"Timeout downloading PDF: {request_url}")
             return None
         except httpx.HTTPStatusError as e:
+            if (
+                e.response.status_code == 403
+                and self.browser_fallback
+                and self._is_cloudflare_site(request_url)
+            ):
+                logger.info(f"Cloudflare 403, trying browser fallback: {request_url}")
+                return self._download_via_browser(request_url, cache_path)
             logger.error(f"HTTP error downloading PDF: {e}")
             return None
         except Exception as e:
             logger.error(f"Error downloading PDF: {e}")
             return None
+
+    def _is_cloudflare_site(self, url: str) -> bool:
+        lowered = url.lower()
+        return any(d in lowered for d in self.CLOUDFLARE_DOMAINS)
+
+    def _get_or_create_browser(self):
+        """Lazily create a persistent headless Chrome for PDF downloads."""
+        if self._browser_driver:
+            try:
+                self._browser_driver.title
+                return self._browser_driver
+            except Exception:
+                self._cleanup_browser()
+
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+        except ImportError:
+            logger.warning("Selenium not installed, browser fallback unavailable")
+            return None
+
+        self._browser_download_dir = tempfile.mkdtemp(prefix="paper-radar-dl-")
+
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument(
+            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        options.add_experimental_option("prefs", {
+            "download.default_directory": self._browser_download_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "plugins.always_open_pdf_externally": True,
+        })
+
+        chrome_bin = os.getenv("CHROME_BIN")
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+
+        if chrome_bin and Path(chrome_bin).exists():
+            options.binary_location = chrome_bin
+            service = (
+                Service(chromedriver_path)
+                if chromedriver_path and Path(chromedriver_path).exists()
+                else Service()
+            )
+        else:
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                service = Service(ChromeDriverManager().install())
+            except Exception:
+                service = Service()
+
+        try:
+            driver = webdriver.Chrome(service=service, options=options)
+            driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+            self._browser_driver = driver
+            return driver
+        except Exception as e:
+            logger.error(f"Failed to create browser for PDF download: {e}")
+            return None
+
+    def _download_via_browser(self, url: str, cache_path: Optional[Path]) -> Optional[str]:
+        """Download PDF using headless Chrome (bypasses Cloudflare)."""
+        driver = self._get_or_create_browser()
+        if not driver:
+            return None
+
+        download_dir = Path(self._browser_download_dir)
+        try:
+            # Clear previous downloads
+            for f in download_dir.iterdir():
+                f.unlink(missing_ok=True)
+
+            driver.get(url)
+
+            # Wait for Cloudflare challenge + PDF download
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                time.sleep(2)
+                completed = [
+                    f for f in download_dir.iterdir()
+                    if f.suffix != ".crdownload" and f.stat().st_size > 0
+                ]
+                if completed:
+                    pdf_content = completed[0].read_bytes()
+                    if not pdf_content.startswith(b"%PDF"):
+                        logger.error(f"Browser download is not a valid PDF: {url}")
+                        return None
+
+                    if cache_path:
+                        cache_path.parent.mkdir(parents=True, exist_ok=True)
+                        cache_path.write_bytes(pdf_content)
+                        logger.debug(f"Cached PDF to: {cache_path}")
+
+                    size_mb = len(pdf_content) / 1024 / 1024
+                    logger.info(f"Browser downloaded PDF: {size_mb:.2f} MB from {url}")
+                    return base64.standard_b64encode(pdf_content).decode("utf-8")
+
+            logger.error(f"Browser download timed out: {url}")
+            return None
+        except Exception as e:
+            logger.error(f"Browser download error: {e}")
+            return None
+
+    def _cleanup_browser(self):
+        if self._browser_driver:
+            try:
+                self._browser_driver.quit()
+            except Exception:
+                pass
+            self._browser_driver = None
+        if self._browser_download_dir:
+            shutil.rmtree(self._browser_download_dir, ignore_errors=True)
+            self._browser_download_dir = None
+
+    def close(self):
+        """Clean up resources including browser."""
+        self._cleanup_browser()
+
+    def __del__(self):
+        self._cleanup_browser()
 
     @staticmethod
     def _build_download_headers(url: str) -> dict:

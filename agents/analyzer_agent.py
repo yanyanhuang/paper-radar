@@ -266,17 +266,26 @@ class AnalyzerAgent:
             # Choose appropriate PDF handler based on paper source
             pdf_base64 = None
             selected_pdf_handler = pdf_handler
-            if paper.is_journal and ezproxy_handler:
-                # Use EZproxy for journal papers (Nature, etc.)
-                logger.debug(f"  Using EZproxy handler for journal paper")
-                selected_pdf_handler = ezproxy_handler
-                pdf_base64 = ezproxy_handler.download_as_base64(
+            if paper.is_journal:
+                # Try direct download first (works for Nature and many OA journals)
+                logger.debug(f"  Trying direct download for journal paper")
+                pdf_base64 = pdf_handler.download_as_base64(
                     paper.pdf_url,
-                    paper_id=paper.arxiv_id,
-                    require_auth=True,
+                    arxiv_id=paper.arxiv_id,
                     source=paper.primary_category,
                     date=today_date,
                 )
+                # Fall back to EZproxy for paywalled journals (Science, etc.)
+                if not pdf_base64 and ezproxy_handler:
+                    logger.debug(f"  Direct failed, trying EZproxy")
+                    selected_pdf_handler = ezproxy_handler
+                    pdf_base64 = ezproxy_handler.download_as_base64(
+                        paper.pdf_url,
+                        paper_id=paper.arxiv_id,
+                        require_auth=True,
+                        source=paper.primary_category,
+                        date=today_date,
+                    )
             else:
                 # Use standard handler for arXiv and preprint papers
                 is_arxiv_preprint = (

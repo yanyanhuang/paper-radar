@@ -302,9 +302,13 @@ class JournalFetcher:
                     journal_path = journal_match.group(1)
                     return f"https://www.cell.com/{journal_path}/pdf/{pii}.pdf"
 
-        # Science journals: construct PDF URL
-        # https://www.science.org/doi/10.1126/science.xxx -> /doi/pdf/...
+        # Science journals: construct direct PDF URL from the DOI.
+        # RSS links look like /doi/abs/10.1126/sciadv.xxx?af=R; the PDF lives at
+        # /doi/pdf/10.1126/sciadv.xxx (the abs/full segment and query break it).
         if "science.org/doi/" in link:
+            doi_match = re.search(r"/doi/(?:abs/|full/|epdf/|pdf/)?(10\.\d{3,}/[^/?#\s]+)", link)
+            if doi_match:
+                return f"https://www.science.org/doi/pdf/{doi_match.group(1)}"
             return link.replace("/doi/", "/doi/pdf/")
 
         # For most journals, PDF is not directly available via RSS
