@@ -170,14 +170,24 @@ class PDFHandler:
         })
 
         chrome_bin = os.getenv("CHROME_BIN")
+        version_main = None
         if chrome_bin and Path(chrome_bin).exists():
             options.binary_location = chrome_bin
+            try:
+                ver_output = subprocess.check_output(
+                    [chrome_bin, "--version"], text=True, timeout=5
+                )
+                version_main = int(ver_output.strip().split()[-1].split(".")[0])
+                logger.debug(f"Detected Chrome version: {version_main}")
+            except Exception:
+                pass
 
         try:
             driver = uc.Chrome(
                 options=options,
                 headless=not use_xvfb,
                 use_subprocess=True,
+                version_main=version_main,
             )
             driver.execute_cdp_cmd("Page.setDownloadBehavior", {
                 "behavior": "allow",
