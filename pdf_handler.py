@@ -145,9 +145,11 @@ class PDFHandler:
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument(
-            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
         options.add_experimental_option("prefs", {
             "download.default_directory": self._browser_download_dir,
             "download.prompt_for_download": False,
@@ -174,14 +176,38 @@ class PDFHandler:
 
         try:
             driver = webdriver.Chrome(service=service, options=options)
-            driver.execute_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
+            driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                "behavior": "allow",
+                "downloadPath": self._browser_download_dir,
+            })
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                    window.chrome = {runtime: {}};
+                """
+            })
             self._browser_driver = driver
+            logger.info("Browser driver created for Cloudflare bypass")
             return driver
         except Exception as e:
             logger.error(f"Failed to create browser for PDF download: {e}")
             return None
+
+    def _wait_for_cloudflare(self, driver, timeout: int = 30) -> bool:
+        """Wait for Cloudflare challenge to resolve."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                title = driver.title.lower()
+                if "just a moment" not in title and "attention" not in title:
+                    return True
+            except Exception:
+                pass
+            time.sleep(1)
+        logger.warning("Cloudflare challenge did not resolve in time")
+        return False
 
     def _download_via_browser(self, url: str, cache_path: Optional[Path]) -> Optional[str]:
         """Download PDF using headless Chrome (bypasses Cloudflare)."""
@@ -191,14 +217,19 @@ class PDFHandler:
 
         download_dir = Path(self._browser_download_dir)
         try:
-            # Clear previous downloads
             for f in download_dir.iterdir():
                 f.unlink(missing_ok=True)
 
             driver.get(url)
 
-            # Wait for Cloudflare challenge + PDF download
-            deadline = time.time() + 90
+            # Phase 1: wait for Cloudflare challenge to pass
+            if not self._wait_for_cloudflare(driver, timeout=45):
+                logger.error(f"Cloudflare challenge not resolved: {url}")
+                return None
+            logger.debug(f"Cloudflare passed, waiting for PDF download: {url}")
+
+            # Phase 2: wait for PDF file to appear in download dir
+            deadline = time.time() + 60
             while time.time() < deadline:
                 time.sleep(2)
                 completed = [
@@ -214,11 +245,43 @@ class PDFHandler:
                     if cache_path:
                         cache_path.parent.mkdir(parents=True, exist_ok=True)
                         cache_path.write_bytes(pdf_content)
-                        logger.debug(f"Cached PDF to: {cache_path}")
 
                     size_mb = len(pdf_content) / 1024 / 1024
                     logger.info(f"Browser downloaded PDF: {size_mb:.2f} MB from {url}")
                     return base64.standard_b64encode(pdf_content).decode("utf-8")
+
+            # Phase 3: download didn't appear — try extracting via CDP
+            logger.debug(f"No file downloaded, trying CDP fetch: {url}")
+            try:
+                current_url = driver.current_url
+                resp = driver.execute_cdp_cmd("Network.enable", {})
+                resource = driver.execute_cdp_cmd(
+                    "Page.captureSnapshot", {}
+                )
+            except Exception:
+                pass
+
+            # Final fallback: use cookies from browser session with httpx
+            try:
+                cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
+                ua = driver.execute_script("return navigator.userAgent")
+                if cookies:
+                    logger.debug(f"Trying cookie-based download with {len(cookies)} cookies")
+                    with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+                        response = client.get(url, headers={
+                            "User-Agent": ua,
+                            "Accept": "application/pdf,*/*",
+                        }, cookies=cookies)
+                        response.raise_for_status()
+                        if response.content.startswith(b"%PDF"):
+                            size_mb = len(response.content) / 1024 / 1024
+                            logger.info(f"Cookie-based download succeeded: {size_mb:.2f} MB from {url}")
+                            if cache_path:
+                                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                                cache_path.write_bytes(response.content)
+                            return base64.standard_b64encode(response.content).decode("utf-8")
+            except Exception as e:
+                logger.debug(f"Cookie-based download failed: {e}")
 
             logger.error(f"Browser download timed out: {url}")
             return None
