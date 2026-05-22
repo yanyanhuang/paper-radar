@@ -182,13 +182,20 @@ class PDFHandler:
             except Exception:
                 pass
 
+        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+
         try:
-            driver = uc.Chrome(
+            kwargs = dict(
                 options=options,
                 headless=not use_xvfb,
                 use_subprocess=True,
-                version_main=version_main,
             )
+            if chromedriver_path and Path(chromedriver_path).exists():
+                kwargs["driver_executable_path"] = chromedriver_path
+            elif version_main:
+                kwargs["version_main"] = version_main
+
+            driver = uc.Chrome(**kwargs)
             driver.execute_cdp_cmd("Page.setDownloadBehavior", {
                 "behavior": "allow",
                 "downloadPath": self._browser_download_dir,
