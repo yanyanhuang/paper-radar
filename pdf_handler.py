@@ -140,7 +140,7 @@ class PDFHandler:
             return False
 
     def _get_or_create_browser(self):
-        """Create Chrome with Xvfb (non-headless) to bypass Cloudflare."""
+        """Create undetected Chrome with Xvfb to bypass Cloudflare."""
         if self._browser_driver:
             try:
                 self._browser_driver.title
@@ -149,31 +149,20 @@ class PDFHandler:
                 self._cleanup_browser()
 
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.service import Service
-            from selenium.webdriver.chrome.options import Options
+            import undetected_chromedriver as uc
         except ImportError:
-            logger.warning("Selenium not installed, browser fallback unavailable")
+            logger.warning("undetected-chromedriver not installed, browser fallback unavailable")
             return None
 
         self._browser_download_dir = tempfile.mkdtemp(prefix="paper-radar-dl-")
         use_xvfb = self._start_xvfb()
 
-        options = Options()
-        if not use_xvfb:
-            options.add_argument("--headless=new")
+        options = uc.ChromeOptions()
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument(
-            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        )
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        options.add_experimental_option("prefs", {
+        options.set_capability("prefs", {
             "download.default_directory": self._browser_download_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
@@ -181,39 +170,22 @@ class PDFHandler:
         })
 
         chrome_bin = os.getenv("CHROME_BIN")
-        chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
-
         if chrome_bin and Path(chrome_bin).exists():
             options.binary_location = chrome_bin
-            service = (
-                Service(chromedriver_path)
-                if chromedriver_path and Path(chromedriver_path).exists()
-                else Service()
-            )
-        else:
-            try:
-                from webdriver_manager.chrome import ChromeDriverManager
-                service = Service(ChromeDriverManager().install())
-            except Exception:
-                service = Service()
 
         try:
-            driver = webdriver.Chrome(service=service, options=options)
+            driver = uc.Chrome(
+                options=options,
+                headless=not use_xvfb,
+                use_subprocess=True,
+            )
             driver.execute_cdp_cmd("Page.setDownloadBehavior", {
                 "behavior": "allow",
                 "downloadPath": self._browser_download_dir,
             })
-            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                    window.chrome = {runtime: {}};
-                """
-            })
             self._browser_driver = driver
             mode = "Xvfb non-headless" if use_xvfb else "headless"
-            logger.info(f"Browser driver created ({mode}) for Cloudflare bypass")
+            logger.info(f"Undetected Chrome created ({mode}) for Cloudflare bypass")
             return driver
         except Exception as e:
             logger.error(f"Failed to create browser for PDF download: {e}")
