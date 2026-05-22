@@ -282,7 +282,6 @@ def main():
     # Standard handler for arXiv papers
     pdf_handler = PDFHandler(
         timeout=config.get("runtime", {}).get("pdf_timeout", 120),
-        cache_dir="./cache/pdfs",
         browser_fallback=True,
     )
 
