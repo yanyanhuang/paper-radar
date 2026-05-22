@@ -1,6 +1,7 @@
 """arXiv paper fetcher module."""
 
 import time
+import zoneinfo
 import arxiv
 import feedparser
 from datetime import datetime, timedelta
@@ -27,7 +28,13 @@ class ArxivFetcher:
         self.max_papers = config.get("max_papers_per_day", 200)
         self.retry_interval_minutes = config.get("retry_interval_minutes", 30)
         self.max_retry_hours = config.get("max_retry_hours", 5)
-        self.client = arxiv.Client(num_retries=10, delay_seconds=5)
+        self.client = arxiv.Client(num_retries=10, delay_seconds=10)
+
+    @staticmethod
+    def _is_arxiv_update_day() -> bool:
+        """arXiv publishes new papers Monday through Friday (US Eastern)."""
+        us_eastern = zoneinfo.ZoneInfo("America/New_York")
+        return datetime.now(us_eastern).weekday() < 5
 
     def get_today_papers(self, debug: bool = False) -> list[Paper]:
         """
@@ -43,6 +50,10 @@ class ArxivFetcher:
         Returns:
             List of Paper objects
         """
+        if not debug and not self._is_arxiv_update_day():
+            logger.info("arXiv does not publish on weekends — skipping RSS retry")
+            return []
+
         max_retries = (self.max_retry_hours * 60) // self.retry_interval_minutes
         retry_count = 0
 
@@ -138,6 +149,9 @@ class ArxivFetcher:
             except Exception as e:
                 logger.error(f"Error fetching batch: {e}")
                 continue
+
+            if i + batch_size < len(new_paper_ids):
+                time.sleep(5)
 
         logger.info(f"Returning {len(papers)} papers from RSS feed")
         return papers
