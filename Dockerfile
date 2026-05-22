@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     chromium \
     chromium-driver \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chrome binary path for Selenium

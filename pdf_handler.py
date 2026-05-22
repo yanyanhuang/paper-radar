@@ -35,6 +35,7 @@ class PDFHandler:
         self.browser_fallback = browser_fallback
         self._browser_driver = None
         self._browser_download_dir = None
+        self._xvfb_proc = None
 
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -118,8 +119,28 @@ class PDFHandler:
         lowered = url.lower()
         return any(d in lowered for d in self.CLOUDFLARE_DOMAINS)
 
+    def _start_xvfb(self):
+        """Start Xvfb virtual display if not already running."""
+        if self._xvfb_proc and self._xvfb_proc.poll() is None:
+            return True
+        xvfb_bin = shutil.which("Xvfb")
+        if not xvfb_bin:
+            return False
+        try:
+            self._xvfb_proc = subprocess.Popen(
+                [xvfb_bin, ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp", "-ac"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            os.environ["DISPLAY"] = ":99"
+            time.sleep(0.5)
+            logger.debug("Xvfb started on :99")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to start Xvfb: {e}")
+            return False
+
     def _get_or_create_browser(self):
-        """Lazily create a persistent headless Chrome for PDF downloads."""
+        """Create Chrome with Xvfb (non-headless) to bypass Cloudflare."""
         if self._browser_driver:
             try:
                 self._browser_driver.title
@@ -136,9 +157,11 @@ class PDFHandler:
             return None
 
         self._browser_download_dir = tempfile.mkdtemp(prefix="paper-radar-dl-")
+        use_xvfb = self._start_xvfb()
 
         options = Options()
-        options.add_argument("--headless=new")
+        if not use_xvfb:
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -189,7 +212,8 @@ class PDFHandler:
                 """
             })
             self._browser_driver = driver
-            logger.info("Browser driver created for Cloudflare bypass")
+            mode = "Xvfb non-headless" if use_xvfb else "headless"
+            logger.info(f"Browser driver created ({mode}) for Cloudflare bypass")
             return driver
         except Exception as e:
             logger.error(f"Failed to create browser for PDF download: {e}")
@@ -299,6 +323,9 @@ class PDFHandler:
         if self._browser_download_dir:
             shutil.rmtree(self._browser_download_dir, ignore_errors=True)
             self._browser_download_dir = None
+        if self._xvfb_proc and self._xvfb_proc.poll() is None:
+            self._xvfb_proc.terminate()
+            self._xvfb_proc = None
 
     def close(self):
         """Clean up resources including browser."""
