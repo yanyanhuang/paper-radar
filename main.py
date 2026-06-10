@@ -260,7 +260,7 @@ def main():
 
     # ========== Stage 2: Analyze with Heavy LLM ==========
     logger.info("")
-    logger.info("[Stage 2] Analyzing papers with Heavy Vision LLM...")
+    logger.info("[Stage 2] Analyzing papers with MinerU + Heavy LLM...")
 
     heavy_llm_config = get_llm_config(config, "heavy")
     if not heavy_llm_config.get("api_key"):
@@ -278,6 +278,10 @@ def main():
         config.get("output", {}).get("language", "Chinese"),
         requests_per_minute=requests_per_minute,
         max_markdown_chars=config.get("mineru", {}).get("max_markdown_chars", 120000),
+        preprocess_workers=config.get("mineru", {}).get(
+            "concurrent_parsing",
+            config.get("runtime", {}).get("concurrent_analysis", 1),
+        ),
     )
 
     # Create PDF handlers

@@ -167,7 +167,7 @@ llm:
     temperature: 0.3
     max_tokens: 40000
     rate_limit:
-      requests_per_minute: 3  # 每分钟最大请求数
+      requests_per_minute: 0  # 0 表示不做本地限速，仅遵循服务商官方限制
 
   # 总结 Agent - 复用 light 或 heavy
   summary:
@@ -192,6 +192,7 @@ mineru:
   poll_interval: 5
   max_wait_seconds: 900
   max_markdown_chars: 120000
+  concurrent_parsing: 2  # PDF 下载 + MinerU 解析并发数；VPS 资源有限，建议 2-3
 
 # 输出配置
 output:

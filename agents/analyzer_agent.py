@@ -5,12 +5,24 @@ import json
 import re
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from loguru import logger
 
 from .base import BaseLLMClient
 from models import Paper, PaperAnalysis, FilterResult
+
+
+@dataclass
+class PreparedPaper:
+    """Paper input prepared for Heavy LLM analysis."""
+
+    index: int
+    filter_result: FilterResult
+    paper_markdown: Optional[str] = None
+    failure: Optional[PaperAnalysis] = None
 
 
 class AnalyzerAgent:
@@ -87,6 +99,7 @@ class AnalyzerAgent:
         language: str = "Chinese",
         requests_per_minute: int = 0,
         max_markdown_chars: int = 120000,
+        preprocess_workers: int = 1,
     ):
         """
         Initialize the analyzer agent.
@@ -96,11 +109,13 @@ class AnalyzerAgent:
             language: Output language
             requests_per_minute: Rate limit (0 means no limit)
             max_markdown_chars: Maximum parsed Markdown characters sent to LLM
+            preprocess_workers: Concurrent workers for PDF download and MinerU parsing
         """
         self.llm = llm_client
         self.language = language
         self.requests_per_minute = requests_per_minute
         self.max_markdown_chars = max_markdown_chars
+        self.preprocess_workers = max(1, int(preprocess_workers or 1))
         self._last_request_time = 0
 
     def _wait_for_rate_limit(self):
@@ -273,113 +288,30 @@ class AnalyzerAgent:
         Returns:
             List of PaperAnalysis results
         """
-        analyses = []
         total = len(filter_results)
+        analyses = []
+        prepared_papers = self._prepare_papers_for_analysis(
+            filter_results,
+            pdf_handler,
+            ezproxy_handler=ezproxy_handler,
+            today_date=today_date,
+            mineru_client=mineru_client,
+        )
 
-        for i, fr in enumerate(filter_results, 1):
+        for prepared in prepared_papers:
+            fr = prepared.filter_result
             paper = fr.paper
-            logger.info(f"[{i}/{total}] Analyzing: {paper.title[:60]}...")
 
-            # Choose appropriate PDF handler based on paper source
-            pdf_base64 = None
-            selected_pdf_handler = pdf_handler
-            storage_source = paper.primary_category
-            if paper.is_journal:
-                # Try direct download first (works for Nature and many OA journals)
-                logger.debug(f"  Trying direct download for journal paper")
-                storage_source = paper.primary_category
-                pdf_base64 = pdf_handler.download_as_base64(
-                    paper.pdf_url,
-                    arxiv_id=paper.arxiv_id,
-                    source=storage_source,
-                    date=today_date,
-                )
-                # Fall back to EZproxy for paywalled journals (Science, etc.)
-                if not pdf_base64 and ezproxy_handler:
-                    logger.debug(f"  Direct failed, trying EZproxy")
-                    selected_pdf_handler = ezproxy_handler
-                    pdf_base64 = ezproxy_handler.download_as_base64(
-                        paper.pdf_url,
-                        paper_id=paper.arxiv_id,
-                        require_auth=True,
-                        source=storage_source,
-                        date=today_date,
-                    )
-            else:
-                # Use standard handler for arXiv and preprint papers
-                is_arxiv_preprint = (
-                    paper.source == "preprint" and ":" not in paper.arxiv_id
-                )
-                storage_source = "arxiv" if is_arxiv_preprint else paper.primary_category
-                pdf_base64 = pdf_handler.download_as_base64(
-                    paper.pdf_url,
-                    arxiv_id=paper.arxiv_id,
-                    source=storage_source,
-                    date=today_date,
-                )
-
-            if not pdf_base64:
-                if paper.summary:
-                    logger.info(f"  ↓ PDF unavailable, analyzing from abstract")
-                else:
-                    logger.warning(f"  ✗ No PDF and no abstract available")
-                    analyses.append(
-                        PaperAnalysis(
-                            arxiv_id=paper.arxiv_id,
-                            pdf_url=paper.pdf_url,
-                            matched_keywords=fr.matched_keywords,
-                            paper=paper,
-                            success=False,
-                            error="Failed to download PDF and no abstract",
-                        )
-                    )
-                    continue
-
-            paper_markdown = None
-            temp_pdf_path = None
-            if pdf_base64 and mineru_client and getattr(mineru_client, "enabled", False):
-                try:
-                    pdf_path = self._get_downloaded_pdf_path(
-                        selected_pdf_handler,
-                        paper.arxiv_id,
-                        storage_source,
-                        today_date,
-                    )
-                    if not pdf_path:
-                        temp_pdf_path = self._write_temp_pdf(pdf_base64, paper.arxiv_id)
-                        pdf_path = temp_pdf_path
-
-                    paper_markdown = mineru_client.parse_pdf_file(
-                        pdf_path,
-                        paper.arxiv_id,
-                        source=storage_source,
-                        date=today_date,
-                    )
-                except Exception as e:
-                    logger.warning(f"  ! MinerU parsing failed for {paper.arxiv_id}: {e}")
-                finally:
-                    if temp_pdf_path and temp_pdf_path.exists():
-                        temp_pdf_path.unlink(missing_ok=True)
-
-            if not paper_markdown and not paper.summary:
-                logger.warning(f"  ✗ MinerU Markdown unavailable and no abstract available")
-                analyses.append(
-                    PaperAnalysis(
-                        arxiv_id=paper.arxiv_id,
-                        pdf_url=paper.pdf_url,
-                        matched_keywords=fr.matched_keywords,
-                        paper=paper,
-                        success=False,
-                        error="MinerU Markdown unavailable and no abstract",
-                    )
-                )
+            if prepared.failure:
+                analyses.append(prepared.failure)
                 continue
 
             # Analyze with MinerU Markdown when available, otherwise abstract fallback.
+            logger.info(f"[{prepared.index}/{total}] Analyzing with Heavy LLM: {paper.title[:60]}...")
             analysis = self.analyze_paper(
                 paper,
                 fr.matched_keywords,
-                paper_markdown=paper_markdown,
+                paper_markdown=prepared.paper_markdown,
             )
 
             # Store reference to original paper
@@ -396,6 +328,187 @@ class AnalyzerAgent:
         logger.info(f"Analysis complete: {successful}/{total} papers analyzed successfully")
 
         return analyses
+
+    def _prepare_papers_for_analysis(
+        self,
+        filter_results: list[FilterResult],
+        pdf_handler,
+        ezproxy_handler=None,
+        today_date: str = None,
+        mineru_client=None,
+    ) -> list[PreparedPaper]:
+        """Download PDFs and parse MinerU Markdown before Heavy LLM calls."""
+        total = len(filter_results)
+        if total == 0:
+            return []
+
+        workers = min(self.preprocess_workers, total)
+        if workers <= 1:
+            return [
+                self._prepare_single_paper(
+                    i,
+                    total,
+                    fr,
+                    pdf_handler,
+                    ezproxy_handler=ezproxy_handler,
+                    today_date=today_date,
+                    mineru_client=mineru_client,
+                )
+                for i, fr in enumerate(filter_results, 1)
+            ]
+
+        logger.info(
+            f"Preparing PDFs/MinerU Markdown with {workers} concurrent worker(s)"
+        )
+        prepared: list[PreparedPaper] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    self._prepare_single_paper,
+                    i,
+                    total,
+                    fr,
+                    pdf_handler,
+                    ezproxy_handler,
+                    today_date,
+                    mineru_client,
+                ): i
+                for i, fr in enumerate(filter_results, 1)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    prepared.append(future.result())
+                except Exception as e:
+                    fr = filter_results[index - 1]
+                    paper = fr.paper
+                    logger.warning(f"  ✗ Preparation failed for {paper.arxiv_id}: {e}")
+                    prepared.append(
+                        PreparedPaper(
+                            index=index,
+                            filter_result=fr,
+                            failure=PaperAnalysis(
+                                arxiv_id=paper.arxiv_id,
+                                pdf_url=paper.pdf_url,
+                                matched_keywords=fr.matched_keywords,
+                                paper=paper,
+                                success=False,
+                                error=f"Preparation failed: {e}",
+                            ),
+                        )
+                    )
+
+        return sorted(prepared, key=lambda item: item.index)
+
+    def _prepare_single_paper(
+        self,
+        index: int,
+        total: int,
+        fr: FilterResult,
+        pdf_handler,
+        ezproxy_handler=None,
+        today_date: str = None,
+        mineru_client=None,
+    ) -> PreparedPaper:
+        """Download one paper PDF and parse it with MinerU when available."""
+        paper = fr.paper
+        logger.info(f"[{index}/{total}] Preparing: {paper.title[:60]}...")
+
+        pdf_base64 = None
+        selected_pdf_handler = pdf_handler
+        storage_source = paper.primary_category
+        if paper.is_journal:
+            logger.debug("  Trying direct download for journal paper")
+            pdf_base64 = pdf_handler.download_as_base64(
+                paper.pdf_url,
+                arxiv_id=paper.arxiv_id,
+                source=storage_source,
+                date=today_date,
+            )
+            if not pdf_base64 and ezproxy_handler:
+                logger.debug("  Direct failed, trying EZproxy")
+                selected_pdf_handler = ezproxy_handler
+                pdf_base64 = ezproxy_handler.download_as_base64(
+                    paper.pdf_url,
+                    paper_id=paper.arxiv_id,
+                    require_auth=True,
+                    source=storage_source,
+                    date=today_date,
+                )
+        else:
+            is_arxiv_preprint = paper.source == "preprint" and ":" not in paper.arxiv_id
+            storage_source = "arxiv" if is_arxiv_preprint else paper.primary_category
+            pdf_base64 = pdf_handler.download_as_base64(
+                paper.pdf_url,
+                arxiv_id=paper.arxiv_id,
+                source=storage_source,
+                date=today_date,
+            )
+
+        if not pdf_base64:
+            if paper.summary:
+                logger.info("  ↓ PDF unavailable, analyzing from abstract")
+                return PreparedPaper(index=index, filter_result=fr)
+            logger.warning("  ✗ No PDF and no abstract available")
+            return PreparedPaper(
+                index=index,
+                filter_result=fr,
+                failure=PaperAnalysis(
+                    arxiv_id=paper.arxiv_id,
+                    pdf_url=paper.pdf_url,
+                    matched_keywords=fr.matched_keywords,
+                    paper=paper,
+                    success=False,
+                    error="Failed to download PDF and no abstract",
+                ),
+            )
+
+        paper_markdown = None
+        temp_pdf_path = None
+        if mineru_client and getattr(mineru_client, "enabled", False):
+            try:
+                pdf_path = self._get_downloaded_pdf_path(
+                    selected_pdf_handler,
+                    paper.arxiv_id,
+                    storage_source,
+                    today_date,
+                )
+                if not pdf_path:
+                    temp_pdf_path = self._write_temp_pdf(pdf_base64, paper.arxiv_id)
+                    pdf_path = temp_pdf_path
+
+                paper_markdown = mineru_client.parse_pdf_file(
+                    pdf_path,
+                    paper.arxiv_id,
+                    source=storage_source,
+                    date=today_date,
+                )
+            except Exception as e:
+                logger.warning(f"  ! MinerU parsing failed for {paper.arxiv_id}: {e}")
+            finally:
+                if temp_pdf_path and temp_pdf_path.exists():
+                    temp_pdf_path.unlink(missing_ok=True)
+
+        if not paper_markdown and not paper.summary:
+            logger.warning("  ✗ MinerU Markdown unavailable and no abstract available")
+            return PreparedPaper(
+                index=index,
+                filter_result=fr,
+                failure=PaperAnalysis(
+                    arxiv_id=paper.arxiv_id,
+                    pdf_url=paper.pdf_url,
+                    matched_keywords=fr.matched_keywords,
+                    paper=paper,
+                    success=False,
+                    error="MinerU Markdown unavailable and no abstract",
+                ),
+            )
+
+        return PreparedPaper(
+            index=index,
+            filter_result=fr,
+            paper_markdown=paper_markdown,
+        )
 
     def _build_markdown_context(self, paper: Paper, paper_markdown: str) -> str:
         """Build a text-only prompt context from parsed Markdown."""

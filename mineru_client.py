@@ -41,8 +41,6 @@ class MinerUClient:
         self.timeout = int(config.get("timeout", 180))
         self.poll_interval = max(1, int(config.get("poll_interval", 5)))
         self.max_wait_seconds = max(30, int(config.get("max_wait_seconds", 900)))
-        self.session = requests.Session()
-
         if self.enabled:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,7 +241,7 @@ class MinerUClient:
         payload: dict[str, Any],
         headers: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
-        response = self.session.post(
+        response = requests.post(
             self._url(path),
             json=payload,
             headers=headers,
@@ -256,7 +254,7 @@ class MinerUClient:
         path: str,
         headers: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
-        response = self.session.get(
+        response = requests.get(
             self._url(path),
             headers=headers,
             timeout=self.timeout,
@@ -280,12 +278,12 @@ class MinerUClient:
 
     def _upload_file(self, upload_url: str, pdf_path: Path) -> None:
         with pdf_path.open("rb") as handle:
-            response = self.session.put(upload_url, data=handle, timeout=self.timeout)
+            response = requests.put(upload_url, data=handle, timeout=self.timeout)
         if response.status_code not in {200, 201, 204}:
             raise MinerUError(f"MinerU upload failed with HTTP {response.status_code}")
 
     def _download_zip_markdown(self, zip_url: str) -> str:
-        response = self.session.get(zip_url, timeout=self.timeout)
+        response = requests.get(zip_url, timeout=self.timeout)
         response.raise_for_status()
         try:
             with ZipFile(BytesIO(response.content)) as archive:
@@ -313,7 +311,7 @@ class MinerUClient:
             return data.decode("utf-8", errors="replace")
 
     def _download_text(self, url: str) -> str:
-        response = self.session.get(url, timeout=self.timeout)
+        response = requests.get(url, timeout=self.timeout)
         response.raise_for_status()
         response.encoding = response.encoding or "utf-8"
         return response.text
