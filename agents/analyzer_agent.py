@@ -1,8 +1,11 @@
-"""Analyzer Agent for deep paper analysis using multimodal LLM."""
+"""Analyzer Agent for deep paper analysis using parsed Markdown."""
 
+import base64
 import json
 import re
+import tempfile
 import time
+from pathlib import Path
 from typing import Optional
 from loguru import logger
 
@@ -11,9 +14,9 @@ from models import Paper, PaperAnalysis, FilterResult
 
 
 class AnalyzerAgent:
-    """Stage 2: Heavy multimodal LLM agent for deep PDF analysis."""
+    """Stage 2: Heavy LLM agent for deep paper analysis."""
 
-    ANALYSIS_PROMPT = """你是一位资深的AI研究员。请仔细阅读这篇学术论文的完整PDF，并提供深度分析。
+    ANALYSIS_PROMPT = """你是一位资深的AI研究员。请仔细阅读这篇学术论文的全文内容，并提供深度分析。
 
 这篇论文被标记为与以下关键词相关: {matched_keywords}
 
@@ -78,18 +81,26 @@ class AnalyzerAgent:
     "score_reason": "一句话解释评分理由，如：方法新颖但实验数据集较小，泛化性有待验证"
 }}"""
 
-    def __init__(self, llm_client: BaseLLMClient, language: str = "Chinese", requests_per_minute: int = 0):
+    def __init__(
+        self,
+        llm_client: BaseLLMClient,
+        language: str = "Chinese",
+        requests_per_minute: int = 0,
+        max_markdown_chars: int = 120000,
+    ):
         """
         Initialize the analyzer agent.
 
         Args:
-            llm_client: Heavy multimodal LLM client (e.g., Gemini)
+            llm_client: Heavy LLM client
             language: Output language
             requests_per_minute: Rate limit (0 means no limit)
+            max_markdown_chars: Maximum parsed Markdown characters sent to LLM
         """
         self.llm = llm_client
         self.language = language
         self.requests_per_minute = requests_per_minute
+        self.max_markdown_chars = max_markdown_chars
         self._last_request_time = 0
 
     def _wait_for_rate_limit(self):
@@ -163,15 +174,15 @@ class AnalyzerAgent:
         self,
         paper: Paper,
         matched_keywords: list[str],
-        pdf_base64: Optional[str] = None,
+        paper_markdown: Optional[str] = None,
     ) -> PaperAnalysis:
         """
-        Analyze a single paper using its PDF, or abstract as fallback.
+        Analyze a single paper using MinerU Markdown, or abstract as fallback.
 
         Args:
             paper: Paper metadata
             matched_keywords: Keywords the paper matched
-            pdf_base64: Base64 encoded PDF content (None to use abstract)
+            paper_markdown: Parsed paper Markdown (None to use abstract)
 
         Returns:
             PaperAnalysis with analysis results
@@ -184,22 +195,16 @@ class AnalyzerAgent:
         try:
             self._wait_for_rate_limit()
 
-            if pdf_base64:
-                response = self.llm.chat_with_pdf(
-                    prompt=prompt,
-                    pdf_base64=pdf_base64,
-                    max_tokens=4000,
-                )
+            if paper_markdown:
+                context = self._build_markdown_context(paper, paper_markdown)
             else:
-                abstract_text = (
-                    f"Title: {paper.title}\n"
-                    f"Authors: {', '.join(paper.authors[:10])}\n"
-                    f"Abstract: {paper.summary}\n"
-                )
-                response = self.llm.chat(
-                    messages=[{"role": "user", "content": f"{prompt}\n\n{abstract_text}"}],
-                    max_tokens=4000,
-                )
+                logger.info("  ↓ MinerU Markdown unavailable, analyzing from abstract")
+                context = self._build_abstract_context(paper)
+
+            response = self.llm.chat(
+                messages=[{"role": "user", "content": f"{prompt}\n\n{context}"}],
+                max_tokens=4000,
+            )
 
             result = self._parse_response(response)
 
@@ -253,6 +258,7 @@ class AnalyzerAgent:
         pdf_handler,
         ezproxy_handler=None,
         today_date: str = None,
+        mineru_client=None,
     ) -> list[PaperAnalysis]:
         """
         Analyze multiple papers.
@@ -262,6 +268,7 @@ class AnalyzerAgent:
             pdf_handler: PDFHandler instance for downloading arXiv PDFs
             ezproxy_handler: Optional EZproxyPDFHandler for paywalled journal PDFs
             today_date: Optional date string (YYYY-MM-DD) for organized PDF storage
+            mineru_client: Optional MinerUClient for converting PDFs to Markdown
 
         Returns:
             List of PaperAnalysis results
@@ -276,13 +283,15 @@ class AnalyzerAgent:
             # Choose appropriate PDF handler based on paper source
             pdf_base64 = None
             selected_pdf_handler = pdf_handler
+            storage_source = paper.primary_category
             if paper.is_journal:
                 # Try direct download first (works for Nature and many OA journals)
                 logger.debug(f"  Trying direct download for journal paper")
+                storage_source = paper.primary_category
                 pdf_base64 = pdf_handler.download_as_base64(
                     paper.pdf_url,
                     arxiv_id=paper.arxiv_id,
-                    source=paper.primary_category,
+                    source=storage_source,
                     date=today_date,
                 )
                 # Fall back to EZproxy for paywalled journals (Science, etc.)
@@ -293,7 +302,7 @@ class AnalyzerAgent:
                         paper.pdf_url,
                         paper_id=paper.arxiv_id,
                         require_auth=True,
-                        source=paper.primary_category,
+                        source=storage_source,
                         date=today_date,
                     )
             else:
@@ -326,36 +335,52 @@ class AnalyzerAgent:
                     )
                     continue
 
-            # Analyze (with PDF if available, otherwise abstract)
+            paper_markdown = None
+            temp_pdf_path = None
+            if pdf_base64 and mineru_client and getattr(mineru_client, "enabled", False):
+                try:
+                    pdf_path = self._get_downloaded_pdf_path(
+                        selected_pdf_handler,
+                        paper.arxiv_id,
+                        storage_source,
+                        today_date,
+                    )
+                    if not pdf_path:
+                        temp_pdf_path = self._write_temp_pdf(pdf_base64, paper.arxiv_id)
+                        pdf_path = temp_pdf_path
+
+                    paper_markdown = mineru_client.parse_pdf_file(
+                        pdf_path,
+                        paper.arxiv_id,
+                        source=storage_source,
+                        date=today_date,
+                    )
+                except Exception as e:
+                    logger.warning(f"  ! MinerU parsing failed for {paper.arxiv_id}: {e}")
+                finally:
+                    if temp_pdf_path and temp_pdf_path.exists():
+                        temp_pdf_path.unlink(missing_ok=True)
+
+            if not paper_markdown and not paper.summary:
+                logger.warning(f"  ✗ MinerU Markdown unavailable and no abstract available")
+                analyses.append(
+                    PaperAnalysis(
+                        arxiv_id=paper.arxiv_id,
+                        pdf_url=paper.pdf_url,
+                        matched_keywords=fr.matched_keywords,
+                        paper=paper,
+                        success=False,
+                        error="MinerU Markdown unavailable and no abstract",
+                    )
+                )
+                continue
+
+            # Analyze with MinerU Markdown when available, otherwise abstract fallback.
             analysis = self.analyze_paper(
                 paper,
                 fr.matched_keywords,
-                pdf_base64,
+                paper_markdown=paper_markdown,
             )
-
-            # Retry once with compressed PDF only when payload is too large (413)
-            if (
-                not analysis.success
-                and self._is_request_too_large_error(analysis.error)
-                and selected_pdf_handler is not None
-            ):
-                logger.warning(
-                    f"  413 detected for {paper.arxiv_id}, compressing PDF and retrying once..."
-                )
-                compressed_pdf = selected_pdf_handler.compress_base64_for_retry(
-                    pdf_base64,
-                    hint=paper.arxiv_id,
-                )
-                if compressed_pdf:
-                    analysis = self.analyze_paper(
-                        paper,
-                        fr.matched_keywords,
-                        compressed_pdf,
-                    )
-                else:
-                    logger.warning(
-                        f"  Compression unavailable/failed for {paper.arxiv_id}, skip retry"
-                    )
 
             # Store reference to original paper
             analysis.paper = paper
@@ -371,3 +396,62 @@ class AnalyzerAgent:
         logger.info(f"Analysis complete: {successful}/{total} papers analyzed successfully")
 
         return analyses
+
+    def _build_markdown_context(self, paper: Paper, paper_markdown: str) -> str:
+        """Build a text-only prompt context from parsed Markdown."""
+        markdown = paper_markdown.strip()
+        if len(markdown) > self.max_markdown_chars:
+            logger.warning(
+                f"  ! MinerU Markdown too long ({len(markdown)} chars), "
+                f"truncating to {self.max_markdown_chars}"
+            )
+            markdown = (
+                markdown[: self.max_markdown_chars]
+                + "\n\n[Markdown truncated because it exceeded the configured limit.]"
+            )
+
+        return (
+            "论文元数据:\n"
+            f"Title: {paper.title}\n"
+            f"Authors: {', '.join(paper.authors[:10])}\n"
+            f"Abstract: {paper.summary}\n\n"
+            "以下是由 MinerU 从论文 PDF 解析得到的 Markdown 全文。请优先依据全文内容分析；"
+            "若 Markdown 中有解析噪声，请结合标题和摘要判断。\n\n"
+            "<paper_markdown>\n"
+            f"{markdown}\n"
+            "</paper_markdown>"
+        )
+
+    @staticmethod
+    def _build_abstract_context(paper: Paper) -> str:
+        """Build a fallback prompt context from metadata and abstract."""
+        return (
+            "论文元数据:\n"
+            f"Title: {paper.title}\n"
+            f"Authors: {', '.join(paper.authors[:10])}\n"
+            f"Abstract: {paper.summary}\n"
+        )
+
+    @staticmethod
+    def _get_downloaded_pdf_path(pdf_handler, paper_id: str, source: str, date: Optional[str]) -> Optional[Path]:
+        if not pdf_handler:
+            return None
+        pdf_path = pdf_handler.get_saved_pdf_path(paper_id, source, date)
+        if pdf_path and Path(pdf_path).exists():
+            return Path(pdf_path)
+        return None
+
+    @staticmethod
+    def _write_temp_pdf(pdf_base64: str, hint: str) -> Path:
+        safe_hint = re.sub(r"[^A-Za-z0-9_.-]+", "_", hint)[:64] or "paper"
+        data = base64.standard_b64decode(pdf_base64)
+        handle = tempfile.NamedTemporaryFile(
+            prefix=f"paper-radar-{safe_hint}-",
+            suffix=".pdf",
+            delete=False,
+        )
+        try:
+            handle.write(data)
+            return Path(handle.name)
+        finally:
+            handle.close()

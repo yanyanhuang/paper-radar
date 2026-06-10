@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-一个基于关键词的学术论文自动分析工具，部署在 NAS 上通过 Docker 运行。支持 **arXiv** 和 **学术期刊**（Nature 子刊、NEJM 等）两种来源。使用双 LLM 架构：轻量级 LLM 进行快速筛选，重量级多模态 LLM 进行 PDF 深度分析。
+一个基于关键词的学术论文自动分析工具，部署在 NAS 上通过 Docker 运行。支持 **arXiv** 和 **学术期刊**（Nature 子刊、NEJM 等）两种来源。使用双 LLM 架构：轻量级 LLM 进行快速筛选，MinerU 将 PDF 转为 Markdown 后交给重量级 LLM 做全文深度分析。
 
 **核心特性**：
 - 支持 arXiv 预印本和顶级期刊（Nature Medicine、Nature Methods 等）
@@ -41,11 +41,11 @@
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Stage 2: 重量级多模态 LLM Agent (深度分析)                        │
+│  Stage 2: MinerU + 重量级 LLM Agent (深度分析)                     │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Heavy Vision LLM (如 GPT-4o / Gemini-2.0-Flash)         │   │
-│  │  ├─ 输入: 论文 PDF (base64) + 匹配的关键词                 │   │
-│  │  ├─ 任务: 阅读完整 PDF，深度分析论文内容                    │   │
+│  │  MinerU PDF -> Markdown + Heavy LLM                      │   │
+│  │  ├─ 输入: MinerU Markdown 全文 + 匹配的关键词              │   │
+│  │  ├─ 任务: 基于论文全文 Markdown 深度分析论文内容            │   │
 │  │  └─ 输出: {                                              │   │
 │  │  │     title, authors, affiliations,                    │   │
 │  │  │     tldr, contributions, methodology, experiments,   │   │
@@ -183,7 +183,7 @@ output:
       path: "./reports/json/"
 
 runtime:
-  schedule: "0 10 * * *"
+  schedule: "0 14 * * *"
   timezone: "Asia/Shanghai"
 
 ezproxy:
@@ -215,7 +215,7 @@ ezproxy:
 
 ### 2. AnalyzerAgent (深度分析)
 
-**输入**: 论文 PDF (base64) + 匹配的关键词
+**输入**: MinerU 解析出的论文 Markdown 全文 + 匹配的关键词
 
 **输出 JSON 格式**:
 ```json
@@ -322,8 +322,8 @@ ezproxy:
 
 | 特性 | 说明 |
 |------|------|
-| 成本优化 | 轻量级 LLM 快速筛选，仅对匹配论文调用昂贵的多模态 API |
-| 深度分析 | 多模态 LLM 直接阅读 PDF，获取完整上下文 |
+| 成本优化 | 轻量级 LLM 快速筛选，仅对匹配论文调用 MinerU 和 Heavy LLM |
+| 深度分析 | MinerU 将 PDF 转为 Markdown，Heavy LLM 获取完整上下文 |
 | 语义理解 | LLM 判断相关性，比 embedding 更准确 |
 | 灵活配置 | 双 LLM 独立配置，可混用不同服务商 |
 | 领域洞察 | 专门的总结 Agent 提供领域级进展分析 |

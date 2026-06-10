@@ -37,11 +37,15 @@ cat > .env << 'EOF'
 # LLM 配置
 LIGHT_LLM_API_BASE=https://api.deepseek.com/v1
 LIGHT_LLM_API_KEY=your-api-key
-LIGHT_LLM_MODEL=deepseek-chat
+LIGHT_LLM_MODEL=deepseek-v4-flash
 
-HEAVY_LLM_API_BASE=https://generativelanguage.googleapis.com/v1beta/openai
-HEAVY_LLM_API_KEY=your-gemini-api-key
-HEAVY_LLM_MODEL=gemini-2.0-flash
+HEAVY_LLM_API_BASE=https://api.deepseek.com/v1
+HEAVY_LLM_API_KEY=your-api-key
+HEAVY_LLM_MODEL=deepseek-v4-pro
+
+# MinerU 配置（PDF 转 Markdown，精准 API 需要 token）
+MINERU_API_BASE=https://mineru.net
+MINERU_API_KEY=your-mineru-api-token
 
 # EZproxy 配置（访问 Nature 等付费期刊）
 HKU_LIBRARY_UID=your-library-uid
@@ -116,11 +120,15 @@ nano .env
 # LLM 配置
 LIGHT_LLM_API_BASE=https://api.deepseek.com/v1
 LIGHT_LLM_API_KEY=your-api-key
-LIGHT_LLM_MODEL=deepseek-chat
+LIGHT_LLM_MODEL=deepseek-v4-flash
 
-HEAVY_LLM_API_BASE=https://generativelanguage.googleapis.com/v1beta/openai
-HEAVY_LLM_API_KEY=your-gemini-api-key
-HEAVY_LLM_MODEL=gemini-2.0-flash
+HEAVY_LLM_API_BASE=https://api.deepseek.com/v1
+HEAVY_LLM_API_KEY=your-api-key
+HEAVY_LLM_MODEL=deepseek-v4-pro
+
+# MinerU 配置（PDF 转 Markdown，精准 API 需要 token）
+MINERU_API_BASE=https://mineru.net
+MINERU_API_KEY=your-mineru-api-token
 
 # EZproxy 配置（访问 Nature 等付费期刊）
 HKU_LIBRARY_UID=your-library-uid
@@ -179,13 +187,13 @@ docker-compose -f docker-compose.nas.yml exec paper-radar python main.py --debug
 
 ## 定时任务
 
-容器内置 cron 定时任务，默认每天 9:00 (Asia/Shanghai) 运行。
+容器内置 cron 定时任务，默认每天 14:00 (Asia/Shanghai) 运行。
 
 修改时间：编辑 `config.yaml` 中的 `runtime.schedule`：
 
 ```yaml
 runtime:
-  schedule: "0 9 * * *"  # cron 格式：分 时 日 月 周
+  schedule: "0 14 * * *"  # cron 格式：分 时 日 月 周
 ```
 
 ---

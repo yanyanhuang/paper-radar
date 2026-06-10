@@ -8,7 +8,7 @@ echo "Timezone: $TZ"
 echo ""
 
 # Export environment variables for cron (with export prefix and quoted values)
-printenv | grep -E "^(LIGHT_|HEAVY_|HKU_|TZ=|CHROME|PATH=)" | while IFS='=' read -r name value; do
+printenv | grep -E "^(LIGHT_|HEAVY_|MINERU_|HKU_|TZ=|CHROME|PATH=)" | while IFS='=' read -r name value; do
     echo "export ${name}=\"${value}\""
 done > /app/.env.cron
 chmod 600 /app/.env.cron

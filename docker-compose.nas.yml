@@ -31,6 +31,10 @@ services:
       - HEAVY_LLM_API_KEY=${HEAVY_LLM_API_KEY}
       - HEAVY_LLM_MODEL=${HEAVY_LLM_MODEL}
 
+      # ===== MinerU Configuration (for PDF -> Markdown parsing) =====
+      - MINERU_API_BASE=${MINERU_API_BASE:-https://mineru.net}
+      - MINERU_API_KEY=${MINERU_API_KEY}
+
       # ===== EZproxy Configuration (for journal PDFs) =====
       - HKU_LIBRARY_UID=${HKU_LIBRARY_UID}
       - HKU_LIBRARY_PIN=${HKU_LIBRARY_PIN}

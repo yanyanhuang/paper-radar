@@ -159,7 +159,7 @@ llm:
     temperature: 0.1
     max_tokens: 500
 
-  # 重量级多模态 LLM - 用于 PDF 深度分析 (OpenAI 兼容格式)
+  # 重量级 LLM - 用于 MinerU Markdown 深度分析 (OpenAI 兼容格式)
   heavy:
     api_base: "${HEAVY_LLM_API_BASE}"
     api_key: "${HEAVY_LLM_API_KEY}"
@@ -175,6 +175,24 @@ llm:
     temperature: 0.5
     max_tokens: 2000
 
+# MinerU PDF 解析配置 - 将所有论文 PDF 转为 Markdown 后再交给 Heavy LLM
+mineru:
+  enabled: true
+  mode: "precise"  # precise: 需 MINERU_API_KEY；agent: 免 token 但有 10MB/20页限制；auto: 有 token 用 precise
+  api_base: "${MINERU_API_BASE}"  # 留空时使用 https://mineru.net
+  api_key: "${MINERU_API_KEY}"
+  model_version: "vlm"  # MinerU 官方推荐，备选: pipeline
+  language: "ch"
+  is_ocr: false
+  enable_table: true
+  enable_formula: true
+  allow_agent_fallback: false
+  cache_dir: "./cache/mineru"
+  timeout: 180
+  poll_interval: 5
+  max_wait_seconds: 900
+  max_markdown_chars: 120000
+
 # 输出配置
 output:
   language: "Chinese"
@@ -188,7 +206,7 @@ output:
 
 # 运行配置
 runtime:
-  schedule: "0 10 * * *"  # cron 格式，每天早上 10 点 (容器时区)
+  schedule: "0 14 * * *"  # cron 格式，每天下午 2 点 (容器时区)
   timezone: "Asia/Shanghai"
   retry_count: 3
   pdf_timeout: 120

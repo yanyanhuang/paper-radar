@@ -37,9 +37,32 @@ class BaseLLMClient:
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.supports_pdf_input = self._resolve_pdf_input_support(
+            kwargs.pop("supports_pdf_input", None),
+            api_base,
+            model,
+        )
         self.extra_params = kwargs
 
         logger.debug(f"Initialized LLM client: {api_base} / {model}")
+
+    @staticmethod
+    def _resolve_pdf_input_support(
+        configured: Optional[bool],
+        api_base: str,
+        model: str,
+    ) -> bool:
+        """Infer whether the endpoint accepts PDF/file-shaped chat content."""
+        if configured is not None:
+            if isinstance(configured, str):
+                return configured.strip().lower() not in {"0", "false", "no", "off"}
+            return bool(configured)
+
+        endpoint = f"{api_base} {model}".lower()
+        if "deepseek" in endpoint:
+            return False
+
+        return True
 
     def chat(
         self,

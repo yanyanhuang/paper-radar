@@ -17,6 +17,7 @@ from fetcher import ArxivFetcher
 from journal_fetcher import JournalFetcher
 from paper_history import PaperHistory
 from pdf_handler import PDFHandler, EZproxyPDFHandler
+from mineru_client import MinerUClient
 from agents import BaseLLMClient, FilterAgent, AnalyzerAgent, SummaryAgent
 from reporter import Reporter
 from models import DailyReport, PaperAnalysis
@@ -276,12 +277,14 @@ def main():
         heavy_llm,
         config.get("output", {}).get("language", "Chinese"),
         requests_per_minute=requests_per_minute,
+        max_markdown_chars=config.get("mineru", {}).get("max_markdown_chars", 120000),
     )
 
     # Create PDF handlers
     # Standard handler for arXiv papers
     pdf_handler = PDFHandler(
         timeout=config.get("runtime", {}).get("pdf_timeout", 120),
+        cache_dir="./cache/pdfs",
         browser_fallback=True,
     )
 
@@ -296,11 +299,20 @@ def main():
             headless=ezproxy_config.get("headless", True),
         )
 
+    mineru_client = MinerUClient(config.get("mineru", {}))
+    if mineru_client.enabled:
+        if mineru_client.is_ready:
+            logger.info(f"MinerU parsing enabled ({mineru_client.active_mode})")
+        else:
+            logger.warning("MinerU parsing enabled but not ready; check MINERU_API_KEY")
+            mineru_client = None
+
     analyses = analyzer_agent.analyze_papers(
         filter_results,
         pdf_handler,
         ezproxy_handler=ezproxy_handler,
         today_date=today_date,
+        mineru_client=mineru_client,
     )
 
     successful_analyses = [a for a in analyses if a.success]
