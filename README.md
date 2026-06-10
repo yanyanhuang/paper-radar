@@ -62,7 +62,7 @@ docker compose exec paper-radar python main.py --dry-run
 | --- | --- |
 | `LIGHT_LLM_API_BASE` / `LIGHT_LLM_API_KEY` / `LIGHT_LLM_MODEL` | 轻量 LLM（OpenAI compatible） |
 | `HEAVY_LLM_API_BASE` / `HEAVY_LLM_API_KEY` / `HEAVY_LLM_MODEL` | 重量 LLM（Markdown 全文分析） |
-| `MINERU_API_BASE` / `MINERU_API_KEY` | MinerU 在线 API（PDF 转 Markdown；精准模式需要 token） |
+| `MINERU_API_BASE` / `MINERU_API_KEY` | MinerU 在线 API（PDF 转 Markdown；有 token 走精准模式，无 token 回退 Agent 轻量模式） |
 | `HKU_LIBRARY_UID` / `HKU_LIBRARY_PIN` | （可选）EZproxy 凭据（访问付费期刊 PDF） |
 | `TZ` | 容器时区（默认 `Asia/Shanghai`） |
 | `WEB_PORT` | Web 端口（默认 `8000`） |

@@ -178,7 +178,7 @@ llm:
 # MinerU PDF 解析配置 - 将所有论文 PDF 转为 Markdown 后再交给 Heavy LLM
 mineru:
   enabled: true
-  mode: "precise"  # precise: 需 MINERU_API_KEY；agent: 免 token 但有 10MB/20页限制；auto: 有 token 用 precise
+  mode: "auto"  # auto: 有 token 用 precise，否则用 agent；agent 免 token 但有 10MB/20页限制
   api_base: "${MINERU_API_BASE}"  # 留空时使用 https://mineru.net
   api_key: "${MINERU_API_KEY}"
   model_version: "vlm"  # MinerU 官方推荐，备选: pipeline
@@ -186,7 +186,7 @@ mineru:
   is_ocr: false
   enable_table: true
   enable_formula: true
-  allow_agent_fallback: false
+  allow_agent_fallback: true
   cache_dir: "./cache/mineru"
   timeout: 180
   poll_interval: 5

@@ -43,7 +43,7 @@ HEAVY_LLM_API_BASE=https://api.deepseek.com/v1
 HEAVY_LLM_API_KEY=your-api-key
 HEAVY_LLM_MODEL=deepseek-v4-pro
 
-# MinerU 配置（PDF 转 Markdown，精准 API 需要 token）
+# MinerU 配置（PDF 转 Markdown；有 token 走精准模式，无 token 回退 Agent 轻量模式）
 MINERU_API_BASE=https://mineru.net
 MINERU_API_KEY=your-mineru-api-token
 
@@ -126,7 +126,7 @@ HEAVY_LLM_API_BASE=https://api.deepseek.com/v1
 HEAVY_LLM_API_KEY=your-api-key
 HEAVY_LLM_MODEL=deepseek-v4-pro
 
-# MinerU 配置（PDF 转 Markdown，精准 API 需要 token）
+# MinerU 配置（PDF 转 Markdown；有 token 走精准模式，无 token 回退 Agent 轻量模式）
 MINERU_API_BASE=https://mineru.net
 MINERU_API_KEY=your-mineru-api-token
 
