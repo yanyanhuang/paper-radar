@@ -43,6 +43,7 @@ ENV/
 logs/
 reports/
 cache/
+outputs/
 *.log
 
 # Cookies and session files
@@ -55,3 +56,5 @@ Thumbs.db
 
 # Test files (development only)
 test_*.py
+!tests/
+!tests/test_*.py

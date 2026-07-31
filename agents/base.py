@@ -2,8 +2,18 @@
 
 import httpx
 from openai import OpenAI
+from dataclasses import dataclass
 from typing import Optional
 from loguru import logger
+
+
+@dataclass(frozen=True)
+class LLMChatResponse:
+    """Normalized chat response with the metadata needed for retry decisions."""
+
+    content: str
+    finish_reason: Optional[str] = None
+    completion_tokens: Optional[int] = None
 
 
 class BaseLLMClient:
@@ -83,6 +93,21 @@ class BaseLLMClient:
         Returns:
             The assistant's response text
         """
+        return self.chat_with_metadata(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        ).content
+
+    def chat_with_metadata(
+        self,
+        messages: list[dict],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> LLMChatResponse:
+        """Send a chat request and retain finish metadata for validation/retries."""
         params = {
             "model": self.model,
             "messages": messages,
@@ -93,7 +118,13 @@ class BaseLLMClient:
 
         try:
             response = self.client.chat.completions.create(**params)
-            return response.choices[0].message.content
+            choice = response.choices[0]
+            usage = getattr(response, "usage", None)
+            return LLMChatResponse(
+                content=choice.message.content or "",
+                finish_reason=getattr(choice, "finish_reason", None),
+                completion_tokens=getattr(usage, "completion_tokens", None),
+            )
         except Exception as e:
             logger.error(f"LLM chat error: {e}")
             raise

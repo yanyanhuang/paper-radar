@@ -157,7 +157,7 @@ llm:
     api_key: "${LIGHT_LLM_API_KEY}"
     model: "${LIGHT_LLM_MODEL}"
     temperature: 0.1
-    max_tokens: 500
+    max_tokens: 40000
 
   # 重量级 LLM - 用于 MinerU Markdown 深度分析 (OpenAI 兼容格式)
   heavy:
@@ -173,7 +173,8 @@ llm:
   summary:
     use: "light"  # 可选: "light" 或 "heavy"
     temperature: 0.5
-    max_tokens: 2000
+    # 推理模型会在可见正文前消耗 reasoning tokens，需预留足够输出预算
+    max_tokens: 40000
 
 # MinerU PDF 解析配置 - 将所有论文 PDF 转为 Markdown 后再交给 Heavy LLM
 mineru:

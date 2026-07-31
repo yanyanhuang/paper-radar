@@ -146,7 +146,7 @@ def main():
     logger.info("[Stage 0] Fetching papers...")
 
     papers = []
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    report_date = datetime.now().strftime("%Y-%m-%d")
 
     # Initialize paper history for deduplication
     paper_history = PaperHistory("./cache/paper_history.json")
@@ -213,7 +213,12 @@ def main():
         sys.exit(1)
 
     light_llm = BaseLLMClient(**light_llm_config)
-    filter_agent = FilterAgent(light_llm, keywords)
+    llm_max_attempts = config.get("runtime", {}).get("retry_count", 3)
+    filter_agent = FilterAgent(
+        light_llm,
+        keywords,
+        max_attempts=llm_max_attempts,
+    )
 
     filter_workers = config.get("runtime", {}).get("concurrent_filtering", 5)
     try:
@@ -236,15 +241,22 @@ def main():
     )
 
     logger.info(f"Matched {len(filter_results)} papers")
+    if filter_agent.last_failure_count:
+        logger.error(
+            f"Light LLM could not classify {filter_agent.last_failure_count} paper(s) "
+            f"after {filter_agent.max_attempts} attempt(s); these are operational "
+            "failures, not non-matches"
+        )
 
     if not filter_results:
         logger.warning("No papers matched any keywords. Exiting.")
         # Still generate empty report
         report = DailyReport(
-            date=datetime.now().strftime("%Y-%m-%d"),
+            date=report_date,
             total_papers=len(papers),
             matched_papers=0,
             analyzed_papers=0,
+            filter_failed_papers=filter_agent.last_failure_count,
             summaries={kw: "今日该领域暂无相关论文更新。" for kw in keyword_names},
             analyses_by_keyword={kw: [] for kw in keyword_names},
             keywords=keyword_names,
@@ -282,6 +294,7 @@ def main():
             "concurrent_parsing",
             config.get("runtime", {}).get("concurrent_analysis", 1),
         ),
+        max_attempts=llm_max_attempts,
     )
 
     # Create PDF handlers
@@ -315,7 +328,7 @@ def main():
         filter_results,
         pdf_handler,
         ezproxy_handler=ezproxy_handler,
-        today_date=today_date,
+        today_date=report_date,
         mineru_client=mineru_client,
     )
 
@@ -334,7 +347,7 @@ def main():
                 source=paper.primary_category,
                 keywords=analysis.matched_keywords,
                 pdf_path=pdf_handler.get_saved_pdf_path(
-                    paper.arxiv_id, paper.primary_category, today_date
+                    paper.arxiv_id, paper.primary_category, report_date
                 ),
             )
             external_papers_saved += 1
@@ -356,7 +369,11 @@ def main():
 
     summary_llm_config = get_llm_config(config, "summary")
     summary_llm = BaseLLMClient(**summary_llm_config)
-    summary_agent = SummaryAgent(summary_llm, config.get("output", {}).get("language", "Chinese"))
+    summary_agent = SummaryAgent(
+        summary_llm,
+        config.get("output", {}).get("language", "Chinese"),
+        max_attempts=llm_max_attempts,
+    )
 
     # Only generate summaries for keywords with papers
     keywords_with_papers = {
@@ -377,10 +394,11 @@ def main():
     logger.info("[Stage 4] Generating and sending report...")
 
     report = DailyReport(
-        date=datetime.now().strftime("%Y-%m-%d"),
+        date=report_date,
         total_papers=len(papers),
         matched_papers=len(filter_results),
         analyzed_papers=len(successful_analyses),
+        filter_failed_papers=filter_agent.last_failure_count,
         summaries=summaries,
         analyses_by_keyword=analyses_by_keyword,
         keywords=keyword_names,

@@ -36,7 +36,7 @@ class AnalyzerAgent:
 
 1. **基本信息提取**
    - 完整标题
-   - 作者列表（前5位主要作者）
+   - 完整作者列表（仅在论文元数据未提供作者时用于兜底；无法确认则返回空数组）
    - 作者机构/单位
 
 2. **核心内容分析**
@@ -100,6 +100,7 @@ class AnalyzerAgent:
         requests_per_minute: int = 0,
         max_markdown_chars: int = 120000,
         preprocess_workers: int = 1,
+        max_attempts: int = 3,
     ):
         """
         Initialize the analyzer agent.
@@ -110,12 +111,17 @@ class AnalyzerAgent:
             requests_per_minute: Rate limit (0 means no limit)
             max_markdown_chars: Maximum parsed Markdown characters sent to LLM
             preprocess_workers: Concurrent workers for PDF download and MinerU parsing
+            max_attempts: Maximum attempts for invalid, empty, or failed LLM responses
         """
         self.llm = llm_client
         self.language = language
         self.requests_per_minute = requests_per_minute
         self.max_markdown_chars = max_markdown_chars
         self.preprocess_workers = max(1, int(preprocess_workers or 1))
+        try:
+            self.max_attempts = max(1, int(max_attempts))
+        except (TypeError, ValueError):
+            self.max_attempts = 3
         self._last_request_time = 0
 
     def _wait_for_rate_limit(self):
@@ -173,6 +179,25 @@ class AnalyzerAgent:
         return None
 
     @staticmethod
+    def _resolve_authors(metadata_authors, extracted_authors) -> list[str]:
+        """Prefer authoritative paper metadata over lossy LLM extraction."""
+        for candidates in (metadata_authors, extracted_authors):
+            if not isinstance(candidates, list):
+                continue
+
+            authors = []
+            seen = set()
+            for author in candidates:
+                name = str(author or "").strip()
+                if name and name not in seen:
+                    authors.append(name)
+                    seen.add(name)
+            if authors:
+                return authors
+
+        return []
+
+    @staticmethod
     def _is_request_too_large_error(error: Optional[str]) -> bool:
         """Check whether an error message indicates request payload too large."""
         if not error:
@@ -208,30 +233,53 @@ class AnalyzerAgent:
         )
 
         try:
-            self._wait_for_rate_limit()
-
             if paper_markdown:
                 context = self._build_markdown_context(paper, paper_markdown)
             else:
                 logger.info("  ↓ MinerU Markdown unavailable, analyzing from abstract")
                 context = self._build_abstract_context(paper)
 
-            response = self.llm.chat(
-                messages=[{"role": "user", "content": f"{prompt}\n\n{context}"}],
-                max_tokens=4000,
-            )
+            messages = [{"role": "user", "content": f"{prompt}\n\n{context}"}]
+            result = None
+            last_error = "Unknown analysis error"
 
-            result = self._parse_response(response)
+            for attempt in range(1, self.max_attempts + 1):
+                self._wait_for_rate_limit()
+                try:
+                    llm_response = self.llm.chat_with_metadata(messages=messages)
+                    response = llm_response.content
+                    result = self._parse_response(response)
+                    if result is not None:
+                        break
+
+                    last_error = (
+                        "Invalid LLM JSON response "
+                        f"(finish_reason={llm_response.finish_reason or 'unknown'}, "
+                        f"content_chars={len(response)})"
+                    )
+                    logger.warning(
+                        f"Analysis response invalid for {paper.arxiv_id} "
+                        f"(attempt {attempt}/{self.max_attempts}): {last_error}"
+                    )
+                    logger.debug(f"Response prefix: {response[:500]}")
+                except Exception as e:
+                    last_error = f"LLM request error: {e}"
+                    logger.warning(
+                        f"Error analyzing paper {paper.arxiv_id} "
+                        f"(attempt {attempt}/{self.max_attempts}): {e}"
+                    )
 
             if result is None:
-                logger.warning(f"Failed to parse analysis for {paper.arxiv_id}")
-                logger.debug(f"Response: {response[:500]}")
+                logger.error(
+                    f"Analysis failed for {paper.arxiv_id} after "
+                    f"{self.max_attempts} attempt(s): {last_error}"
+                )
                 return PaperAnalysis(
                     arxiv_id=paper.arxiv_id,
                     pdf_url=paper.pdf_url,
                     matched_keywords=matched_keywords,
                     success=False,
-                    error="Failed to parse LLM response",
+                    error=last_error,
                 )
 
             return PaperAnalysis(
@@ -239,7 +287,10 @@ class AnalyzerAgent:
                 pdf_url=paper.pdf_url,
                 matched_keywords=matched_keywords,
                 title=result.get("title", paper.title),
-                authors=result.get("authors", paper.authors[:5]),
+                authors=self._resolve_authors(
+                    paper.authors,
+                    result.get("authors", []),
+                ),
                 affiliations=result.get("affiliations", []),
                 tldr=result.get("tldr", ""),
                 motivation=result.get("motivation", ""),

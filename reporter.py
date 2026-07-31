@@ -21,6 +21,19 @@ class Reporter:
         self.language = self.output_config.get("language", "Chinese")
 
     @staticmethod
+    def _resolve_authors(analysis: PaperAnalysis) -> list[str]:
+        """Use source metadata authors when available, including legacy analyses."""
+        paper_authors = analysis.paper.authors if analysis.paper else []
+        for candidates in (paper_authors, analysis.authors):
+            if not isinstance(candidates, list):
+                continue
+            authors = [str(author or "").strip() for author in candidates]
+            authors = list(dict.fromkeys(author for author in authors if author))
+            if authors:
+                return authors
+        return []
+
+    @staticmethod
     def _is_preprint_source(source: str, primary_category: str, paper_id: str) -> bool:
         """Detect whether a paper belongs to bioRxiv/medRxiv preprint sources."""
         source_norm = str(source or "").strip().lower()
@@ -55,11 +68,17 @@ class Reporter:
 
     def generate_markdown(self, report: DailyReport) -> str:
         """Generate Markdown report."""
+        filter_status = (
+            f" | **筛选异常**: {report.filter_failed_papers} 篇"
+            if report.filter_failed_papers
+            else ""
+        )
         lines = [
             "# 📚 论文每日速递",
             "",
             f"**日期**: {report.date} | **今日新论文**: {report.total_papers} 篇 | "
-            f"**匹配论文**: {report.matched_papers} 篇 | **深度分析**: {report.analyzed_papers} 篇",
+            f"**匹配论文**: {report.matched_papers} 篇 | **深度分析**: {report.analyzed_papers} 篇"
+            f"{filter_status}",
             "",
             "---",
             "",
@@ -108,8 +127,9 @@ class Reporter:
                     lines.append("| 项目 | 内容 |")
                     lines.append("|------|------|")
 
-                    authors_str = ", ".join(analysis.authors[:3])
-                    if len(analysis.authors) > 3:
+                    authors = self._resolve_authors(analysis)
+                    authors_str = ", ".join(authors[:3])
+                    if len(authors) > 3:
                         authors_str += " et al."
                     lines.append(f"| **作者** | {authors_str} |")
 
@@ -234,7 +254,7 @@ class Reporter:
         return {
             "id": analysis.arxiv_id,
             "title": analysis.title or (paper.title if paper else ""),
-            "authors": analysis.authors or (paper.authors if paper else []),
+            "authors": self._resolve_authors(analysis),
             "affiliations": analysis.affiliations,
             "summary": summary,
             "tldr": analysis.tldr,
@@ -292,6 +312,7 @@ class Reporter:
             "total_papers": report.total_papers,
             "matched_papers": report.matched_papers,
             "analyzed_papers": report.analyzed_papers,
+            "filter_failed_papers": report.filter_failed_papers,
             "summaries": report.summaries,
             "keywords": report.keywords,
             "papers_by_keyword": papers_by_keyword,

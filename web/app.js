@@ -846,7 +846,7 @@ function renderPapers(report) {
         )
         .join('');
 
-      const authors = formatMetaList(paper.authors, 4);
+      const authors = formatMetaList(paper.authors);
       const affiliations = formatMetaList(paper.affiliations, 2);
       const metaItems = [
         authors ? `<div class="paper-meta-item"><span class="paper-meta-label">作者</span><span>${authors}</span></div>` : '',
@@ -1141,9 +1141,18 @@ function renderMarkdownInline(rawText) {
     .join('');
 }
 
+function unwrapMarkdownFence(text) {
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  const trimmed = source.trim();
+  const fencedMarkdown = trimmed.match(
+    /^(`{3,}|~{3,})[ \t]*(?:markdown|md)[ \t]*\n([\s\S]*?)\n\1[ \t]*$/i
+  );
+  return fencedMarkdown ? fencedMarkdown[2] : source;
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
-  const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+  const lines = unwrapMarkdownFence(text).split('\n');
   const blocks = [];
   let paragraph = [];
 
@@ -1269,6 +1278,13 @@ function setPeekedCard(targetId) {
   if (!el) return;
   el.classList.add('paper-peek');
   peekedCardId = targetId;
+}
+
+function clearPaperHash() {
+  if (!window.location.hash.startsWith('#paper-')) return;
+  const nextUrl = `${window.location.pathname}${window.location.search}`;
+  history.replaceState(null, '', nextUrl);
+  clearPeekedCard();
 }
 
 function parseKeywordPaperTarget(targetId, report) {
@@ -1471,11 +1487,13 @@ async function init() {
 }
 
 dateSelect.addEventListener('change', async (event) => {
+  clearPaperHash();
   const date = event.target.value;
   await loadReportForDate(date, { resetFilters: true });
 });
 
 keywordSelect.addEventListener('change', (event) => {
+  clearPaperHash();
   state.keyword = event.target.value;
   state.sort = (state.keyword === 'all' || state.onlyFavorites) ? 'score' : 'number';
   state.visibleCount = PAGE_SIZE;
@@ -1490,6 +1508,7 @@ trendsEl.addEventListener('click', (event) => {
   const keyword = btn.getAttribute('data-keyword');
   if (!keyword) return;
   if (!state.report?.keywords?.includes(keyword)) return;
+  clearPaperHash();
   state.keyword = keyword;
   state.sort = state.onlyFavorites ? 'score' : 'number';
   state.visibleCount = PAGE_SIZE;
@@ -1504,12 +1523,14 @@ const debouncedSearch = debounce(() => {
 }, 200);
 
 searchInput.addEventListener('input', (event) => {
+  clearPaperHash();
   state.query = event.target.value;
   state.visibleCount = PAGE_SIZE;
   debouncedSearch();
 });
 
 sortSelect.addEventListener('change', (event) => {
+  clearPaperHash();
   state.sort = event.target.value;
   state.visibleCount = PAGE_SIZE;
   renderPapers(state.report);
@@ -1517,6 +1538,7 @@ sortSelect.addEventListener('change', (event) => {
 
 if (favoritesToggleBtn) {
   favoritesToggleBtn.addEventListener('click', () => {
+    clearPaperHash();
     state.onlyFavorites = !state.onlyFavorites;
     state.visibleCount = PAGE_SIZE;
     if (state.onlyFavorites && state.sort === 'number') {
@@ -1528,6 +1550,7 @@ if (favoritesToggleBtn) {
 }
 
 clearFiltersBtn.addEventListener('click', () => {
+  clearPaperHash();
   state.keyword = 'all';
   state.query = '';
   state.sort = 'score';
@@ -1552,6 +1575,7 @@ trendsEl.addEventListener('click', (event) => {
   } else if (source === 'journal') {
     state.showJournal = !state.showJournal;
   }
+  clearPaperHash();
   if (!state.showPreprint && !state.showJournal) {
     state.showPreprint = true;
     state.showJournal = true;
@@ -1643,6 +1667,7 @@ papersEl.addEventListener('click', async (event) => {
   if (!tag) return;
 
   if (event.shiftKey) {
+    clearPaperHash();
     const nextQuery = state.query.trim() ? `${state.query.trim()} ${tag}` : tag;
     state.query = nextQuery;
     state.visibleCount = PAGE_SIZE;
@@ -1652,6 +1677,7 @@ papersEl.addEventListener('click', async (event) => {
   }
 
   if (state.report?.keywords?.includes(tag)) {
+    clearPaperHash();
     state.keyword = tag;
     state.sort = state.onlyFavorites ? 'score' : 'number';
     state.visibleCount = PAGE_SIZE;
@@ -1662,6 +1688,7 @@ papersEl.addEventListener('click', async (event) => {
     return;
   }
 
+  clearPaperHash();
   const nextQuery = state.query.trim() ? `${state.query.trim()} ${tag}` : tag;
   state.query = nextQuery;
   state.visibleCount = PAGE_SIZE;

@@ -43,7 +43,12 @@ class FilterAgent:
 
 请判断这篇论文是否与给定的关键词高度相关，并以 JSON 格式返回结果。"""
 
-    def __init__(self, llm_client: BaseLLMClient, keywords: list[dict]):
+    def __init__(
+        self,
+        llm_client: BaseLLMClient,
+        keywords: list[dict],
+        max_attempts: int = 3,
+    ):
         """
         Initialize the filter agent.
 
@@ -54,6 +59,11 @@ class FilterAgent:
         self.llm = llm_client
         self.keywords = keywords
         self.keywords_description = self._format_keywords()
+        try:
+            self.max_attempts = max(1, int(max_attempts))
+        except (TypeError, ValueError):
+            self.max_attempts = 3
+        self.last_failure_count = 0
 
     def _format_keywords(self) -> str:
         """Format keywords into description text."""
@@ -113,47 +123,65 @@ class FilterAgent:
             abstract=paper.summary,
         )
 
-        try:
-            response = self.llm.chat(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-            )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        last_error = "Unknown filtering error"
 
-            result = self._parse_response(response)
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                llm_response = self.llm.chat_with_metadata(
+                    messages=messages,
+                    temperature=0.1,
+                )
+                response = llm_response.content
+                result = self._parse_response(response)
 
-            if result is None:
-                logger.warning(f"Failed to parse response for {paper.arxiv_id}: {response[:200]}")
-                return FilterResult(
-                    paper=paper,
-                    matched=False,
-                    reason="Failed to parse LLM response",
+                if result is not None:
+                    matched = result.get("matched", False)
+                    relevance = result.get("relevance", "low")
+
+                    # Only consider matched if relevance is high or medium
+                    if matched and relevance == "low":
+                        matched = False
+
+                    return FilterResult(
+                        paper=paper,
+                        matched=matched,
+                        matched_keywords=result.get("matched_keywords", []),
+                        relevance=relevance,
+                        reason=result.get("reason", ""),
+                    )
+
+                last_error = (
+                    "Invalid LLM JSON response "
+                    f"(finish_reason={llm_response.finish_reason or 'unknown'}, "
+                    f"content_chars={len(response)})"
+                )
+                logger.warning(
+                    f"Filtering response invalid for {paper.arxiv_id} "
+                    f"(attempt {attempt}/{self.max_attempts}): {last_error}"
+                )
+                logger.debug(f"Response prefix: {response[:200]}")
+            except Exception as e:
+                last_error = f"LLM request error: {e}"
+                logger.warning(
+                    f"Error filtering paper {paper.arxiv_id} "
+                    f"(attempt {attempt}/{self.max_attempts}): {e}"
                 )
 
-            matched = result.get("matched", False)
-            relevance = result.get("relevance", "low")
-
-            # Only consider matched if relevance is high or medium
-            if matched and relevance == "low":
-                matched = False
-
-            return FilterResult(
-                paper=paper,
-                matched=matched,
-                matched_keywords=result.get("matched_keywords", []),
-                relevance=relevance,
-                reason=result.get("reason", ""),
-            )
-
-        except Exception as e:
-            logger.error(f"Error filtering paper {paper.arxiv_id}: {e}")
-            return FilterResult(
-                paper=paper,
-                matched=False,
-                reason=f"Error: {str(e)}",
-            )
+        logger.error(
+            f"Filtering failed for {paper.arxiv_id} after "
+            f"{self.max_attempts} attempt(s): {last_error}"
+        )
+        return FilterResult(
+            paper=paper,
+            matched=False,
+            reason="Filtering failed; paper was not classified",
+            success=False,
+            error=last_error,
+        )
 
     def filter_papers(
         self,
@@ -172,6 +200,7 @@ class FilterAgent:
         """
         total = len(papers)
         if total == 0:
+            self.last_failure_count = 0
             logger.info("Filtering complete: 0/0 papers matched")
             return []
 
@@ -188,19 +217,28 @@ class FilterAgent:
 
         if worker_count == 1:
             results = []
+            failures = 0
             for i, paper in enumerate(papers, 1):
                 logger.info(f"[{i}/{total}] Filtering: {paper.title[:60]}...")
                 result = self.filter_paper(paper)
-                if result.matched:
+                if not result.success:
+                    failures += 1
+                    logger.error(f"  ! Classification failed: {result.error}")
+                elif result.matched:
                     results.append(result)
                     logger.info(f"  ✓ Matched: {result.matched_keywords} ({result.relevance})")
                 else:
                     logger.debug("  ✗ Not matched")
-            logger.info(f"Filtering complete: {len(results)}/{total} papers matched")
+            self.last_failure_count = failures
+            logger.info(
+                f"Filtering complete: {len(results)}/{total} papers matched; "
+                f"{failures} operational failure(s)"
+            )
             return results
 
         matched_by_index: dict[int, FilterResult] = {}
         future_to_index = {}
+        failures = 0
 
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             for index, paper in enumerate(papers, 1):
@@ -222,15 +260,24 @@ class FilterAgent:
                         paper=paper,
                         matched=False,
                         reason=f"Error: {str(e)}",
+                        success=False,
+                        error=str(e),
                     )
 
                 logger.info(f"[{completed}/{total}] Done: {paper.title[:60]}...")
-                if result.matched:
+                if not result.success:
+                    failures += 1
+                    logger.error(f"  ! Classification failed: {result.error}")
+                elif result.matched:
                     matched_by_index[index] = result
                     logger.info(f"  ✓ Matched: {result.matched_keywords} ({result.relevance})")
                 else:
                     logger.debug("  ✗ Not matched")
 
         results = [matched_by_index[idx] for idx in sorted(matched_by_index)]
-        logger.info(f"Filtering complete: {len(results)}/{total} papers matched")
+        self.last_failure_count = failures
+        logger.info(
+            f"Filtering complete: {len(results)}/{total} papers matched; "
+            f"{failures} operational failure(s)"
+        )
         return results

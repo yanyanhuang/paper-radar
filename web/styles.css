@@ -35,6 +35,8 @@ body {
 }
 
 .page {
+  width: 100%;
+  min-width: 0;
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px 24px 48px;
@@ -359,10 +361,12 @@ body {
 .content {
   display: grid;
   gap: 20px;
+  min-width: 0;
 }
 
 /* Summary */
 .summary {
+  min-width: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
@@ -391,9 +395,11 @@ body {
 .papers {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .paper-card {
+  min-width: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -875,6 +881,13 @@ body {
 }
 
 /* Markdown Styles */
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .markdown h1,
 .markdown h2,
 .markdown h3 {
@@ -924,12 +937,16 @@ body {
 }
 
 .markdown pre {
+  max-width: 100%;
   margin: 10px 0;
   padding: 12px 14px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown pre code {

@@ -112,6 +112,8 @@ class FilterResult:
     matched_keywords: list[str] = field(default_factory=list)
     relevance: str = "low"
     reason: str = ""
+    success: bool = True
+    error: str = ""
 
 
 @dataclass
@@ -122,6 +124,7 @@ class DailyReport:
     total_papers: int
     matched_papers: int
     analyzed_papers: int
+    filter_failed_papers: int = 0
 
     # Summaries grouped by keyword
     summaries: dict[str, str] = field(default_factory=dict)
