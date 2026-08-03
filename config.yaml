@@ -108,14 +108,26 @@ journals:
     - name: "Nature Methods"
       key: "nature_methods"
       enabled: true
+    - name: "Nature Biotechnology"
+      key: "nature_biotechnology"
+      enabled: true
     - name: "Nature Machine Intelligence"
       key: "nature_machine_intelligence"
       enabled: true
     - name: "Nature Biomedical Engineering"
       key: "nature_biomedical_engineering"
       enabled: true
+    - name: "Nature Cancer"
+      key: "nature_cancer"
+      enabled: true
     - name: "Nature Computational Science"
       key: "nature_computational_science"
+      enabled: true
+    - name: "npj Digital Medicine"
+      key: "npj_digital_medicine"
+      enabled: true
+    - name: "Nature Neuroscience"
+      key: "nature_neuroscience"
       enabled: true
     # 医学期刊
     - name: "NEJM"
@@ -131,6 +143,15 @@ journals:
     - name: "Lancet Digital Health"
       key: "lancet_digital_health"
       enabled: true
+    - name: "Lancet Oncology"
+      key: "lancet_oncology"
+      enabled: true
+    - name: "Radiology"
+      key: "radiology"
+      enabled: true
+    - name: "Radiology: Artificial Intelligence"
+      key: "radiology_artificial_intelligence"
+      enabled: true
     # Cell Press 系列
     - name: "Cell"
       key: "cell"
@@ -141,12 +162,18 @@ journals:
     - name: "Cell Reports Medicine"
       key: "cell_reports_medicine"
       enabled: true
+    - name: "Neuron"
+      key: "neuron"
+      enabled: true
     # Science 系列
     - name: "Science"
       key: "science"
       enabled: true
     - name: "Science Advances"
       key: "science_advances"
+      enabled: true
+    - name: "Science Translational Medicine"
+      key: "science_translational_medicine"
       enabled: true
 
 # LLM 配置 - 双 Agent 架构

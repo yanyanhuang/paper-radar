@@ -1,5 +1,6 @@
 """Journal paper fetcher module for Nature, NEJM, etc."""
 
+import html
 import re
 import feedparser
 import requests
@@ -27,6 +28,8 @@ JOURNAL_RSS_FEEDS = {
     "nature_biomedical_engineering": "https://www.nature.com/natbiomedeng.rss",
     "nature_cancer": "https://www.nature.com/natcancer.rss",
     "nature_computational_science": "https://www.nature.com/natcomputsci.rss",
+    "npj_digital_medicine": "https://www.nature.com/npjdigitalmed.rss",
+    "nature_neuroscience": "https://www.nature.com/neuro.rss",
     # Medical journals
     "nejm": "https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss",
     # Note: NEJM AI RSS feed has been discontinued
@@ -37,11 +40,33 @@ JOURNAL_RSS_FEEDS = {
     "cell": "https://www.cell.com/cell/current.rss",
     "cancer_cell": "https://www.cell.com/cancer-cell/current.rss",
     "cell_reports_medicine": "https://www.cell.com/cell-reports-medicine/current.rss",
+    "neuron": "https://www.cell.com/neuron/current.rss",
     # Science journals
     "science": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
     "science_advances": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv",
+    "science_translational_medicine": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=scitranslmed",
     # Other
     "pnas": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=pnas",
+}
+
+# Some publishers block server-side RSS clients. Crossref provides a stable
+# metadata fallback for those journals and for RSNA, whose legacy feeds no
+# longer return entries.
+JOURNAL_CROSSREF_ISSNS = {
+    "nejm": "0028-4793",
+    "lancet": "0140-6736",
+    "lancet_digital_health": "2589-7500",
+    "lancet_oncology": "1470-2045",
+    "cell": "0092-8674",
+    "cancer_cell": "1535-6108",
+    "cell_reports_medicine": "2666-3791",
+    "neuron": "0896-6273",
+    "science": "0036-8075",
+    "science_advances": "2375-2548",
+    "science_translational_medicine": "1946-6234",
+    "radiology": "0033-8419",
+    "radiology_artificial_intelligence": "2638-6100",
+    "pnas": "0027-8424",
 }
 
 PREPRINT_KEYS = {"biorxiv", "medrxiv"}
@@ -128,25 +153,36 @@ class JournalFetcher:
     def _fetch_journal(self, journal: dict, debug: bool = False) -> list[Paper]:
         """Fetch papers from a single journal."""
         name = journal["name"]
-        rss_url = journal.get("rss_url") or JOURNAL_RSS_FEEDS.get(journal.get("key", ""))
+        key = journal.get("key", "")
+        rss_url = journal.get("rss_url") or JOURNAL_RSS_FEEDS.get(key)
+        crossref_issn = journal.get("crossref_issn") or JOURNAL_CROSSREF_ISSNS.get(key)
 
-        if not rss_url:
-            logger.warning(f"No RSS URL for journal: {name}")
-            return []
+        if rss_url:
+            logger.debug(f"Fetching RSS: {rss_url}")
 
-        logger.debug(f"Fetching RSS: {rss_url}")
+            # Parse RSS feed
+            feed = feedparser.parse(rss_url)
 
-        # Parse RSS feed
-        feed = feedparser.parse(rss_url)
+            if feed.entries:
+                return self._parse_feed_entries(feed.entries, journal, debug)
 
-        if not feed.entries:
-            logger.warning(f"No entries in RSS feed for {name}")
-            return []
+            status = getattr(feed, "status", None)
+            status_note = f" (HTTP {status})" if status else ""
+            logger.warning(f"No entries in RSS feed for {name}{status_note}")
 
+        if crossref_issn:
+            logger.info(f"  {name}: using Crossref metadata fallback")
+            return self._fetch_crossref(journal, crossref_issn, debug)
+
+        logger.warning(f"No usable RSS or Crossref source for journal: {name}")
+        return []
+
+    def _parse_feed_entries(self, entries, journal: dict, debug: bool) -> list[Paper]:
+        """Parse and date-filter entries returned by an RSS feed."""
         papers = []
         cutoff_date = datetime.now().date() - timedelta(days=7)  # Last 7 days for journals
 
-        for entry in feed.entries[: self.max_papers]:
+        for entry in entries[: self.max_papers]:
             try:
                 paper = self._parse_entry(entry, journal)
                 if paper:
@@ -158,6 +194,166 @@ class JournalFetcher:
                 continue
 
         return papers
+
+    def _fetch_crossref(
+        self,
+        journal: dict,
+        issn: str,
+        debug: bool = False,
+    ) -> list[Paper]:
+        """Fetch recently deposited journal metadata from Crossref."""
+        url = f"https://api.crossref.org/journals/{issn}/works"
+        params = {
+            "rows": self.max_papers,
+            "sort": "created",
+            "order": "desc",
+        }
+        if not debug:
+            today = datetime.now().date()
+            cutoff = today - timedelta(days=7)
+            params["filter"] = (
+                f"from-created-date:{cutoff.isoformat()},"
+                f"until-created-date:{today.isoformat()},"
+                "type:journal-article"
+            )
+        else:
+            params["filter"] = "type:journal-article"
+
+        try:
+            response = self.session.get(
+                url,
+                params=params,
+                headers={
+                    "User-Agent": (
+                        "PaperRadar/0.1 "
+                        "(https://github.com/yanyanhuang/paper-radar)"
+                    )
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            items = response.json().get("message", {}).get("items", [])
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning(f"Crossref fetch failed for {journal['name']}: {exc}")
+            return []
+
+        papers = []
+        for item in items[: self.max_papers]:
+            try:
+                paper = self._parse_crossref_item(item, journal)
+                if paper:
+                    papers.append(paper)
+            except Exception as exc:
+                logger.debug(f"Error parsing Crossref item: {exc}")
+
+        return papers
+
+    def _parse_crossref_item(self, item: dict, journal: dict) -> Optional[Paper]:
+        """Convert one Crossref work into the project's Paper model."""
+        raw_title = item.get("title") or ""
+        if isinstance(raw_title, list):
+            raw_title = raw_title[0] if raw_title else ""
+        title = self._clean_markup(str(raw_title))
+        if not title:
+            return None
+
+        doi = str(item.get("DOI", "")).strip()
+        key = journal.get("key", journal["name"].lower().replace(" ", "_"))
+        paper_id = f"{key}:{doi.lower()}" if doi else self._crossref_fallback_id(key, title)
+
+        authors = []
+        for author in item.get("author", []):
+            name = author.get("name")
+            if not name:
+                name = " ".join(
+                    part for part in (author.get("given"), author.get("family")) if part
+                )
+            if name:
+                authors.append(name)
+
+        summary = self._clean_markup(str(item.get("abstract") or ""))
+        published = self._crossref_date(item)
+        pdf_url = self._crossref_pdf_url(item, key, doi)
+
+        return Paper(
+            arxiv_id=paper_id,
+            title=title,
+            summary=summary,
+            authors=authors,
+            published=published,
+            updated=published,
+            pdf_url=pdf_url,
+            categories=[journal["name"]],
+            primary_category=journal["name"],
+            source=self._resolve_source_type(journal),
+        )
+
+    @staticmethod
+    def _clean_markup(value: str) -> str:
+        """Remove JATS/HTML tags and normalize whitespace."""
+        value = re.sub(r"<[^>]+>", " ", value)
+        return re.sub(r"\s+", " ", html.unescape(value)).strip()
+
+    @staticmethod
+    def _crossref_fallback_id(key: str, title: str) -> str:
+        """Generate a deterministic ID for a Crossref item without a DOI."""
+        import hashlib
+
+        title_hash = hashlib.md5(title.encode()).hexdigest()[:8]
+        return f"{key}:{title_hash}"
+
+    @staticmethod
+    def _crossref_date(item: dict) -> datetime:
+        """Prefer a complete publication date, then the Crossref deposit date."""
+        partial_date = None
+        for field in ("published-online", "published", "published-print", "issued"):
+            parts = item.get(field, {}).get("date-parts", [[]])
+            parts = parts[0] if parts else []
+            if len(parts) >= 3:
+                return datetime(parts[0], parts[1], parts[2])
+            if len(parts) >= 2 and partial_date is None:
+                partial_date = datetime(parts[0], parts[1], 1)
+            elif len(parts) == 1 and partial_date is None:
+                partial_date = datetime(parts[0], 1, 1)
+
+        created = item.get("created", {}).get("date-parts", [[]])
+        created = created[0] if created else []
+        if len(created) >= 3:
+            return datetime(created[0], created[1], created[2])
+        return partial_date or datetime.now()
+
+    @staticmethod
+    def _crossref_pdf_url(item: dict, key: str, doi: str) -> str:
+        """Choose or construct the best PDF URL available in Crossref."""
+        for link in item.get("link", []):
+            url = str(link.get("URL", ""))
+            content_type = str(link.get("content-type", "")).lower()
+            if "/pdf/" in url.lower() or "application/pdf" in content_type:
+                return url.replace("http://", "https://", 1)
+
+        resource = item.get("resource") or {}
+        primary = resource.get("primary") or {}
+        resource_url = str(primary.get("URL") or "")
+        pii_match = re.search(r"/pii[:/](S[\dA-Z]+)", resource_url, re.IGNORECASE)
+        if pii_match:
+            pii = pii_match.group(1)
+            if key.startswith("lancet"):
+                return f"https://www.thelancet.com/action/showPdf?pii={pii}"
+            cell_paths = {
+                "cell": "cell",
+                "cancer_cell": "cancer-cell",
+                "cell_reports_medicine": "cell-reports-medicine",
+                "neuron": "neuron",
+            }
+            if key in cell_paths:
+                return f"https://www.cell.com/{cell_paths[key]}/pdf/{pii}.pdf"
+
+        if doi and key.startswith("science"):
+            return f"https://www.science.org/doi/pdf/{doi}"
+        if doi and key in {"radiology", "radiology_artificial_intelligence"}:
+            return f"https://pubs.rsna.org/doi/pdf/{doi}"
+
+        return resource_url or str(item.get("URL", ""))
 
     def _parse_entry(self, entry, journal: dict) -> Optional[Paper]:
         """Parse RSS entry into Paper object."""
